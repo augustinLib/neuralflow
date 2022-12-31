@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from PIL import Image
 
 def step_function(x):
     y = x > 0
@@ -37,6 +38,10 @@ def show_function(func, is_relu = False):
         plt.ylim(-0.1, 1.1)
     plt.show()
 
+
+def show_img(img):
+    image = Image.fromarray(np.uint8(img))
+    image.show()
 
 
 class SimpleThreeLayerDNN():
