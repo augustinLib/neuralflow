@@ -15,6 +15,22 @@ class BaseFunction():
         return "Function"
 
 
+class Step(BaseFunction):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return step_function(x)
+
+
+class Identity(BaseFunction):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return identity(x)
+
+
 class Sigmoid(BaseFunction):
     def __init__(self):
         super().__init__()
@@ -23,3 +39,17 @@ class Sigmoid(BaseFunction):
         return sigmoid(x)
     
 
+class Softmax(BaseFunction):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return softmax(x)
+
+
+class ReLU(BaseFunction):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return relu(x)
