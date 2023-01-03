@@ -1,36 +1,39 @@
 import numpy as np
-from function import *
+from collections import OrderedDict
+from simpleDL.function import *
 
 
-class BackBone():
+class BackBone:
     def __init__(self):
-        self.network = {}
+        self.network = OrderedDict()
 
 
     def __call__(self, arg):
-        result = self.forward(arg)
+        result = self._forward(arg)
         return result
 
     
-    def forward():
+    def _forward():
         pass
 
 
-class DenseLayer():
-    def __init__(self, input_size, output_size, random_init = True):
+class DenseLayer:
+    def __init__(self, input_size, output_size):
         self.input_size = input_size
         self.output_size = output_size
-        self.parameter = {}
-        if random_init:
-            self.parameter["weight"] = np.random.random((input_size, output_size))
-            self.parameter["bias"] = np.random.random((output_size))
-        else:
-            self.parameter["weight"] = np.zeros((input_size, output_size))
-            self.parameter["bias"] =  np.zeros((output_size))
+        self.differentiable = True
+        self.x = None
+        self.parameter = OrderedDict()
+
+        self.parameter["weight"] = 0.01 * np.random.randn(input_size, output_size)
+        self.parameter["bias"] = np.zeros(output_size)
+
+        self.dw = None
+        self.db = None
 
 
     def __call__(self, arg):
-        result = self.forward(arg)
+        result = self._forward(arg)
         return result
 
     
@@ -38,9 +41,18 @@ class DenseLayer():
         return "DenseLayer"
 
     
-    def forward(self, x):
+    def _forward(self, x):
+        self.x = x
         result = np.dot(x, self.parameter["weight"]) + self.parameter["bias"]
         return result
+
+    
+    def _backward(self, input):
+        dx = np.dot(input, self.parameter["weight"].T)
+        self.dw = np.dot(self.x.T, input)
+        self.db = np.sum(input, axis=0)
+
+        return dx
 
 
     def load_parameter(self, parameter: tuple):
@@ -53,9 +65,11 @@ class MakeModel(BackBone):
     def __init__(self, layers: list):
         super().__init__()
         self.sequence = []
+        self.grad = OrderedDict()
         dense_count = 1
         function_count = 1
-        for layer in layers:
+        self.layers = layers
+        for layer in self.layers:
             if repr(layer) == "DenseLayer":
                 self.network[f"{repr(layer)}{dense_count}"] = layer
                 self.sequence.append(f"{repr(layer)}{dense_count}")
@@ -68,11 +82,15 @@ class MakeModel(BackBone):
 
 
     def __call__(self, arg):
-        result = self.forward(arg)
+        result = self._forward(arg)
         return result
 
+    
+    def __str__(self) -> str:
+        return "model"
 
-    def forward(self, x):
+
+    def _forward(self, x):
         input = x
         for layer_name in self.sequence:
             layer = self.network[layer_name]
@@ -82,6 +100,30 @@ class MakeModel(BackBone):
         return input
         
     
-    def printmodel(self):
-        print(self.network)
+    def _backward(self, loss):
+        result = loss._backward()
+        for layer_name in reversed(self.sequence):
+            layer = self.network[layer_name]
+            result = layer._backward(result)
+
+    
+    def _update(self, lr= 0.01):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.differentiable:
+                self.network[layer_name].parameter["weight"] -= (lr * layer.dw)
+                self.network[layer_name].parameter["bias"] -= (lr * layer.db)
+
+
+    def gradient(self):
+        count = 1
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.differentiable:
+                self.grad[f"w{count}"] = layer.dw
+                self.grad[f"b{count}"] = layer.db
+
+        return self.grad
+                
+
 

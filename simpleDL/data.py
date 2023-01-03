@@ -23,6 +23,8 @@ class DataLoader:
             return x, y
 
         elif self.current >= len(self.batch_mask):
+            # for next epoch
+            self.current = 0
             raise StopIteration
         
         else:
