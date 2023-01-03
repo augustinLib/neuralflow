@@ -291,5 +291,6 @@ data/
 *.gz
 *.pkl
 test.ipynb
+test.py
 
 # End of https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks,pycharm+all,visualstudiocode
