@@ -38,5 +38,10 @@ class DataLoader:
     def __getitem__(self, index):
         return self.x[index], self.y[index]
 
+
     def __len__(self):
+        return int(len(self.x) / self.batch_size)
+
+    
+    def dataset_len(self):
         return len(self.x)
