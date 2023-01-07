@@ -2,6 +2,20 @@ import numpy as np
 
 class DataLoader:
     def __init__(self, x, y, batch_size=1, random_sampling = False) -> None:
+        """
+        Build dataloader that can iterate with batch size in dataset (for supervised task)
+
+        Parameters
+        ----------
+        x : data corresponding to feature
+
+        y : data corresponding to label
+
+        batch_size (int) : batch size. Default: 1
+
+        random_sampling (bool) : Whether for random sampling from dataset. Default: False
+
+        """
         self.current = 0
         self.x = np.array(x)
         self.y = np.array(y)

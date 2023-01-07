@@ -4,8 +4,19 @@ from collections import OrderedDict
 import numpy as np
 
 
+
 class BaseTrainer():
     def __init__(self, n_epochs= 10, init_lr=0.01):
+        """
+        Base class for Trainer
+
+        Parameters
+        ----------
+        n_epochs (int) : number of epochs. Default: 10
+
+        init_lr (int) : initial learning rate. Default: 0.01
+
+        """
         self.n_epochs = n_epochs
         self.init_lr = init_lr
         self.metric = OrderedDict()
@@ -19,12 +30,27 @@ class BaseTrainer():
 
 
 class ClassificationTrainer(BaseTrainer):
-    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01, is_validate = True):
+    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01):
+        """
+        Trainer for Classification
+
+        Parameters
+        ----------
+        model : model for classification task
+
+        critic : loss function class
+
+        optimizer : optimizer for model optimizing
+
+        n_epochs (int) : number of epochs. Default: 10
+
+        init_lr (int) : initial learning rate. Default: 0.01
+
+        """
         super().__init__(n_epochs, init_lr)
         self.model = model
         self.critic = critic
         self.optimizer = optimizer
-        self.is_validate = is_validate
 
         self.train_accuracy_list = np.array([])
         self.valid_accuracy_list = np.array([])
@@ -47,7 +73,17 @@ class ClassificationTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, valid_dataloader = None):
+    def train(self, train_dataloader, valid_dataloader = None) -> None:
+        """
+        Train model with train/valid data
+
+        Parameters
+        ----------
+        train_dataloader (iterable) : Train dataloader that can iterate with batch size in train dataset
+
+        valid_dataloader (iterable) : Valid dataloader that can iterate with batch size in valid dataset
+
+        """
         for epoch in range(self.n_epochs):
             print(f"epoch {epoch+1}")
             tmp_train_loss = np.array([])
@@ -112,6 +148,9 @@ class ClassificationTrainer(BaseTrainer):
 
 
     def show_error_graph(self):
+        """
+        Visualize training/validation error
+        """
         plt.title("train/valid loss per epoch")
         plt.plot(self.train_loss_list, "-r" ,label = 'train error')
         plt.plot(self.valid_loss_list, "-b" ,label = 'valid error')
@@ -123,6 +162,9 @@ class ClassificationTrainer(BaseTrainer):
 
 
     def show_accuracy_graph(self):
+        """
+        Visualize training/validation accuracy
+        """
         plt.title("train/valid accuarcy per epoch")
         plt.plot(self.train_accuracy_list, "-r" ,label = 'train accuracy')
         plt.plot(self.valid_accuracy_list, "-b" ,label = 'valid accuracy')
