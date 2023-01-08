@@ -2,31 +2,6 @@ import numpy as np
 import copy
 from collections import OrderedDict
 
-def tokenization(text: str) -> tuple:
-    """
-    sentence tokenization based on space
-
-    Parameters
-    ----------
-    text (str) : sentence to be tokenized
-
-    """
-    text = text.lower()
-    punctuation_list = [".", ",", "?", "!"]
-    for punc in punctuation_list:
-        text = text.replace(f"{punc}", f" {punc}")
-    words = text.split(" ")
-
-    word_to_id = OrderedDict()
-    id_to_word = OrderedDict()
-
-    for i, word in enumerate(set(words)):
-        word_to_id[word], id_to_word[i] = i, word
-
-    corpus = np.array([word_to_id[word] for word in words])
-
-    return corpus, word_to_id, id_to_word
-
 
 class BaseTokenizer():
     def __init__(self):
@@ -45,6 +20,9 @@ class BaseTokenizer():
     def add_speical_token(self, name, token):
         self.special_token[name] = token
 
+    
+    def __repr__(self) -> str:
+        return "Tokenizer"
         
 
 
