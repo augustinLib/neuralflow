@@ -105,7 +105,7 @@ class ClassificationTrainer(BaseTrainer):
                 self._update()
             
                 
-            epoch_train_loss = np.sum(tmp_train_loss)
+            epoch_train_loss = np.sum(tmp_train_loss) / train_dataloader.batch_size
             self.train_loss_list = np.append(self.train_loss_list, epoch_train_loss)
             dataset_len = train_dataloader.dataset_len()
             epoch_train_accuracy = train_correct_num/float(dataset_len) * 100
@@ -137,7 +137,7 @@ class ClassificationTrainer(BaseTrainer):
 
             print(f"valid loss : {valid_loss}    valid accuarcy : {valid_correct_num/y_num*100}\r", end="")
 
-        epoch_valid_loss = np.sum(tmp_valid_loss)
+        epoch_valid_loss = np.sum(tmp_valid_loss) / valid_dataloader.batch_size
         self.valid_loss_list = np.append(self.valid_loss_list, epoch_valid_loss)
         dataset_len = valid_dataloader.dataset_len()
         epoch_valid_accuracy = valid_correct_num/float(dataset_len) * 100
