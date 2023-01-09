@@ -25,19 +25,18 @@ class BaseTokenizer():
         return "Tokenizer"
         
 
-
 class SpaceTokenizer(BaseTokenizer):
     def __init__(self):
         super().__init__()
 
 
-    def train(self, text: list):
+    def train(self, text):
         """
-        sentence tokenization based on space
+        train vocab based on space
 
         Parameters
         ----------
-        text () : sentence to be tokenized
+        text (str or iterable) : sentence to be tokenized
 
         """
         if isinstance(text, str):
@@ -50,27 +49,54 @@ class SpaceTokenizer(BaseTokenizer):
             text_copy = copy.deepcopy(text)
             words = []
             for index, sentence in enumerate(text_copy):
-                text_copy[index] = sentence.lower()
+                sentence = sentence.lower()
                 for punc in self.punctuation_list:
-                    text_copy[index] = text_copy[index].replace(f"{punc}", f" {punc}")
-                words += text_copy[index].split(" ")
+                    sentence = sentence.replace(f"{punc}", f" {punc}")
+                words += sentence.split(" ")
 
         for i, word in enumerate(set(words)):
                 self.word_to_id[word], self.id_to_word[i+self.n_tokens] = i+self.n_tokens, word
 
             
-    def encode(self, text: str) -> list:
-        for punc in self.punctuation_list:
-            text = text.replace(f"{punc}", f" {punc}")
-        words = text.split(" ")
+    def encode(self, text):
+        """
+        
+        """
         encoded_text = np.array([])
+        
+        if isinstance(text, str):
+            text = text.lower()
+            for punc in self.punctuation_list:
+                text = text.replace(f"{punc}", f" {punc}")
+            words = text.split(" ")
+        
+            for word in words:
+                try:
+                    encoded_text = np.append(encoded_text, word)
+                except IndexError:
+                    encoded_text = np.append(encoded_text, self.speical_token["unk"])
+                    
 
-        for word in words:
-            try:
-                encoded_text = np.append(encoded_text, word)
-            except IndexError:
-                encoded_text = np.append(encoded_text, self.special_token["unk"])
+        else:
+            text_copy = copy.deepcopy(text)
 
+            for index, sentence in enumerate(text_copy):
+                sentence = sentence.lower()
+                for punc in self.punctuation_list:
+                    sentence = sentence.replace(f"{punc}", f" {punc}")
+                    sentence.split(" ")
+
+                for word in sentence:
+                    try:
+                        
+                        encoded_text[index] = np.append(encoded_text, word)
+                    except IndexError:
+                        text_copy[index] = text_copy[index].replace(f"{punc}", f" {punc}")
+
+
+
+        
+        
         return encoded_text
 
     
