@@ -60,9 +60,9 @@ class SpaceTokenizer(BaseTokenizer):
             
     def encode(self, text):
         """
-        
+        convert text into integer id
         """
-        encoded_text = np.array([])
+        encoded_text = np.array([]).astype(np.int32)
         
         if isinstance(text, str):
             text = text.lower()
@@ -72,9 +72,10 @@ class SpaceTokenizer(BaseTokenizer):
         
             for word in words:
                 try:
-                    encoded_text = np.append(encoded_text, word)
-                except IndexError:
-                    encoded_text = np.append(encoded_text, self.speical_token["unk"])
+                    encoded_word = self.word_to_id[word]
+                    encoded_text = np.append(encoded_text, encoded_word)
+                except KeyError:
+                    encoded_text = np.append(encoded_text, self.word_to_id["[UNK]"])
                     
 
         else:
@@ -86,27 +87,41 @@ class SpaceTokenizer(BaseTokenizer):
                     sentence = sentence.replace(f"{punc}", f" {punc}")
                     sentence.split(" ")
 
+                encoded_sentence = np.array([])
                 for word in sentence:
                     try:
-                        
-                        encoded_text[index] = np.append(encoded_text, word)
-                    except IndexError:
-                        text_copy[index] = text_copy[index].replace(f"{punc}", f" {punc}")
-
-
-
-        
+                        encoded_word = self.word_to_id[word]
+                        encoded_sentence = np.append(encoded_sentence, encoded_word)
+                    except KeyError:
+                        encoded_sentence = np.append(encoded_sentence, self.word_to_id["[UNK]"])
+                
+                encoded_text = np.append(encoded_text, encoded_sentence)
         
         return encoded_text
 
     
     def decode(self, id_list: list) -> str:
-        id_list_copy = copy.deepcopy(id_list)
-        for index, id in enumerate(id_list_copy):
-            id_list_copy[index] = self.id_to_word[id]
-        
-        decoded_id = " ".join(id_list_copy)
-        return decoded_id
+        id_list_copy= copy.deepcopy(id_list)
+        decoded_id = []
+        if id_list_copy.ndim == 1:
+            for index, id in enumerate(id_list_copy):
+                temp = self.id_to_word[id]
+                decoded_id.append(temp)
+
+            id_sentence = " ".join(decoded_id)
+
+            return id_sentence
+
+        else:
+            temp_decoded = []
+            for id_sentence in id_list_copy:
+                for index, id in enumerate(id_sentence):
+                    temp_decoded.append(self.id_to_word[id])
+
+                temp_decoded_str = " ".join(temp_decoded)
+                decoded_id.append(temp_decoded_str)
+
+            return decoded_id
 
     
     def get_vocab(self):
@@ -116,3 +131,10 @@ class SpaceTokenizer(BaseTokenizer):
     def get_id(self):
         return self.id_to_word
 
+
+
+def cosine_similarity(x, y, eps=1e-8):
+    nx = x / (np.sqrt(np.sum(x**2)) + eps)
+    ny = y / (np.sqrt(np.sum(y**2)) + eps)
+
+    return np.dot(nx, ny)
