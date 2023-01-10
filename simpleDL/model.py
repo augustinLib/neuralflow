@@ -106,6 +106,81 @@ class DenseLayer():
         self.parameter["bias"] = np.array(bias)
 
 
+class EmbeddingLayer():
+    def __init__(self, vocab_size: int, hidden_size: int, initialize: str = "He"):
+        """
+        Initialize EmbeddingLayer
+
+        Parameters
+        ----------
+        vocab_size (int) : vocab의 size
+
+        hidden_size (int) : embedding될 representation의 hidden size
+
+        initialize (str, optional) : 가중치 초기화 방법 설정. Default: "He"
+
+        """
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.differentiable = True
+        self.index = None
+        self.parameter = OrderedDict()
+
+        if initialize == "He":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
+
+
+        elif initialize == "Xavier":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(vocab_size)
+
+
+        elif initialize == "None":
+            self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+
+        else:
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
+
+        self.dw = np.zeros(vocab_size, hidden_size).astype(np.float32)
+
+
+    def __call__(self, arg):
+        result = self._forward(arg)
+        return result
+
+    
+    def __repr__(self) -> str:
+        return "EmbeddingLayer"
+
+    
+    def _forward(self, index):
+        self.index = index
+        weight = self.parameter["weight"]
+        result = weight[index]
+        return result
+
+    
+    def _backward(self, input):
+        """
+        
+        Parameter
+        ---------
+        input : 다음 layer의 해당 layer의 output에 대한 미분값
+
+        Variable
+        --------
+        dx = forward시 input에 대한 미분값으로 이전 layer로 넘겨준다.
+        self.dw = weight에 대한 미분값
+        self.db = bias에 대한 미분값
+
+        """
+        self.dw = np.dot(self.x.T, input)
+        self.db = np.sum(input, axis=0)
+    
+        # for 4-dim tensor
+        dx = dx.reshape(*self.origin_x_shape)
+        return None
+
+
 class ConvLayer():
     """
     Convolution layer
@@ -153,19 +228,17 @@ class ConvLayer():
         self.dw = None
         self.db = None
         
-
-
         if initialize == "He":
-            self.parameter["weight"] = np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width) * (np.sqrt(2 / self.fan_in))
-            self.parameter["bias"] = np.zeros(self.output_channel)    
+            self.parameter["weight"] = np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width).astype(np.float32) * (np.sqrt(2 / self.fan_in))
+            self.parameter["bias"] = np.zeros(self.output_channel).astype(np.float32) 
 
         elif initialize == "Xavier":
-            self.parameter["weight"] = np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width) * np.sqrt(self.fan_in)
-            self.parameter["bias"] = np.zeros(self.output_channel)
+            self.parameter["weight"] = np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width).astype(np.float32) * np.sqrt(self.fan_in)
+            self.parameter["bias"] = np.zeros(self.output_channel).astype(np.float32)
 
         elif initialize == "None":
-            self.parameter["weight"] = 0.01 * np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width)
-            self.parameter["bias"] = np.zeros(self.output_channel)
+            self.parameter["weight"] = 0.01 * np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width).astype(np.float32)
+            self.parameter["bias"] = np.zeros(self.output_channel).astype(np.float32)
 
         else:
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
@@ -216,7 +289,7 @@ class ConvLayer():
         out_width = (input_width + self.padding * 2 -self.kernel_width) // self.stride + 1
 
         img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
-        col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width))
+        col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
 
         for y in range(self.kernel_height):
             y_max = y + self.stride * out_height
@@ -234,7 +307,7 @@ class ConvLayer():
         out_width = (input_width + 2 * self.padding - self.kernel_width) // self.stride + 1
         col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
 
-        img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1))
+        img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
         for y in range(self.kernel_height):
             y_max = y + self.stride * out_height
             for x in range(self.kernel_width):
@@ -289,7 +362,7 @@ class MaxPoolingLayer():
     def _backward(self, input):
         input = input.transpose(0, 2, 3, 1) # (n_input, n_input_channel, input_height, input_width) -> (n_input, out_height, out_width, n_input_channel)
         kernel_size = self.kernel_height * self.kernel_width
-        dmax = np.zeros((input.size, kernel_size)) # (n_input*n_input_channel*input_height*input_width, self.kernel_height*kernel_width)
+        dmax = np.zeros((input.size, kernel_size)).astype(np.float32) # (n_input*n_input_channel*input_height*input_width, self.kernel_height*kernel_width)
         dmax[np.arange(self.mask.size), self.mask.flatten()] = input.flatten()
         dmax = dmax.reshape(input.shape + (kernel_size,))
 
@@ -305,7 +378,7 @@ class MaxPoolingLayer():
         out_width = (input_width + self.padding * 2 -self.kernel_width) // self.stride + 1
 
         img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
-        col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width))
+        col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
 
         for y in range(self.kernel_height):
             y_max = y + self.stride * out_height
@@ -323,7 +396,7 @@ class MaxPoolingLayer():
         out_width = (input_width + 2 * self.padding - self.kernel_width) // self.stride + 1
         col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
 
-        img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1))
+        img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
         for y in range(self.kernel_height):
             y_max = y + self.stride * out_height
             for x in range(self.kernel_width):
@@ -375,7 +448,6 @@ class Model(BackBone):
             self.count_dict[repr(layer)] += 1
 
             
-
     def __call__(self, arg):
         result = self._forward(arg)
         return result
