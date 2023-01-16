@@ -73,7 +73,7 @@ class DenseLayer():
         self.origin_x_shape = x.shape
         x = x.reshape(x.shape[0], -1)
         self.x = x
-        result = np.dot(x, self.parameter["weight"]) + self.parameter["bias"]
+        result = np.matmul(x, self.parameter["weight"]) + self.parameter["bias"]
         return result
 
     
@@ -91,12 +91,13 @@ class DenseLayer():
         self.db = bias에 대한 미분값
 
         """
-        dx = np.dot(input, self.parameter["weight"].T)
-        self.dw = np.dot(self.x.T, input)
+        dx = np.matmul(input, self.parameter["weight"].T)
+        self.dw = np.matmul(self.x.T, input)
         self.db = np.sum(input, axis=0)
 
         # for 4-dim tensor
         dx = dx.reshape(*self.origin_x_shape)
+
         return dx
 
 
@@ -104,6 +105,14 @@ class DenseLayer():
         weight, bias = parameter
         self.parameter["weight"] = np.array(weight)
         self.parameter["bias"] = np.array(bias)
+
+
+    def get_gradient(self):
+        grad = OrderedDict()
+        grad["dw"] = self.dw
+        grad["db"] = self.db
+
+        return grad
 
 
 class EmbeddingLayer():
@@ -140,7 +149,7 @@ class EmbeddingLayer():
         else:
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
 
-        self.dw = np.zeros(vocab_size, hidden_size).astype(np.float32)
+        self.dw = np.zeros((vocab_size, hidden_size)).astype(np.float32)
 
 
     def __call__(self, arg):
@@ -173,12 +182,17 @@ class EmbeddingLayer():
         self.db = bias에 대한 미분값
 
         """
-        self.dw = np.dot(self.x.T, input)
-        self.db = np.sum(input, axis=0)
-    
-        # for 4-dim tensor
-        dx = dx.reshape(*self.origin_x_shape)
+        # self.dw = np.zeros_like(self.parameter["weight"])
+        np.add.at(self.dw, self.index, input)
+
         return None
+
+
+    def get_gradient(self):
+        grad = OrderedDict()
+        grad["dw"] = self.dw
+
+        return grad
 
 
 class ConvLayer():
@@ -260,7 +274,7 @@ class ConvLayer():
 
         col = self.img2col(x)
         col_weight = self.parameter["weight"].reshape(self.output_channel, -1).T
-        result = np.dot(col, col_weight) + self.parameter["bias"]
+        result = np.matmul(col, col_weight) + self.parameter["bias"]
         result = result.reshape(n_input, out_height, out_width, -1).transpose(0, 3, 1, 2)
 
         self.x = x
@@ -273,14 +287,22 @@ class ConvLayer():
     def _backward(self, input):
         input = input.transpose(0,2,3,1).reshape(-1, self.output_channel)
 
-        self.dw = np.dot(self.col.T, input)
+        self.dw = np.matmul(self.col.T, input)
         self.dw = self.dw.transpose(1,0).reshape(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width)
         self.db = np.sum(input, axis=0)
 
-        dcol = np.dot(input, self.col_weight.T)
+        dcol = np.matmul(input, self.col_weight.T)
         result = self.col2img(dcol, self.x.shape)
 
         return result
+
+
+    def get_gradient(self):
+        grad = OrderedDict()
+        grad["dw"] = self.dw
+        grad["db"] = self.db
+
+        return grad
 
 
     def img2col(self, input_data):
@@ -406,6 +428,157 @@ class MaxPoolingLayer():
         return img[:, :, self.padding:input_height + self.padding, self.padding:input_width + self.padding]
 
 
+class RNNCell2():
+    def __init__(self, input_size, hidden_size, bidirectional = True, initialize = "He"):
+        self.differentiable = True
+        self.parameter = OrderedDict()
+        self.input_size = input_size
+        self.hidden_size = hidden_size        
+        self.dx = None
+        self.dwx = None
+        self.dwh = None
+        self.db = None
+        self.cache = None
+
+        if initialize == "He":
+            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * (np.sqrt(2 / input_size))
+            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * (np.sqrt(2 / hidden_size))
+            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)    
+
+        elif initialize == "Xavier":
+            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * np.sqrt(input_size)
+            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * np.sqrt(hidden_size)
+            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
+
+        elif initialize == "None":
+            self.parameter["weight_x"] = 0.01 * np.random.randn(input_size, hidden_size).astype(np.float32)
+            self.parameter["weight_h"] = 0.01 * np.random.randn(hidden_size, hidden_size).astype(np.float32)
+            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
+
+
+    def __repr__(self) -> str:
+        return "RNNCell"
+
+
+    def __call__(self, *arg):
+        result = self._forward(*arg)
+        return result
+
+    
+    def _forward(self, x, h_t_prev):
+        temp_t = np.matmul(h_t_prev, self.parameter["weight_h"]) + np.matmul(x, self.parameter["weight_x"]) + self.parameter["bias"] 
+        result_t = np.tanh(temp_t)
+        # self.cache에 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 저장
+        self.cache = x, h_t_prev, result_t
+
+        return result_t
+
+
+    def _backward(self, input):
+        # self.cache에 저장된 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 불러오기
+        x, h_t_prev, result_t = self.cache
+        # dtanh = 1 - tanh(x)^2
+        dtanh = input * (1 - result_t ** 2)
+        self.db = np.sum(dtanh, axis=0)
+        self.dwh = np.matmul(h_t_prev.T, dtanh)
+        self.dwx = np.matmul(x.T, dtanh)
+        h_result = np.matmul(dtanh, self.parameter["weight_h"].T)
+        x_result = np.matmul(dtanh, self.parameter["weight_x"].T)
+        self.dx = x_result
+
+        return x_result, h_result
+
+
+class RNNCell():
+    def __init__(self, parameter):
+        self.parameter = parameter     
+        self.dx = None
+        self.dwx = None
+        self.dwh = None
+        self.db = None
+        self.cache = None
+
+
+    def __repr__(self) -> str:
+        return "RNNCell"
+
+
+    def __call__(self, *arg):
+        result = self._forward(*arg)
+        return result
+
+    
+    def _forward(self, x, h_t_prev):
+        temp_t = np.matmul(h_t_prev, self.parameter["weight_h"]) + np.matmul(x, self.parameter["weight_x"]) + self.parameter["bias"] 
+        result_t = np.tanh(temp_t)
+        # self.cache에 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 저장
+        self.cache = x, h_t_prev, result_t
+
+        return result_t
+
+
+    def _backward(self, input):
+        # self.cache에 저장된 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 불러오기
+        x, h_t_prev, result_t = self.cache
+        # dtanh = 1 - tanh(x)^2
+        dtanh = input * (1 - result_t ** 2)
+        self.db = np.sum(dtanh, axis=0)
+        self.dwh = np.matmul(h_t_prev.T, dtanh)
+        self.dwx = np.matmul(x.T, dtanh)
+        h_result = np.matmul(dtanh, self.parameter["weight_h"].T)
+        x_result = np.matmul(dtanh, self.parameter["weight_x"].T)
+        self.dx = x_result
+
+        return x_result, h_result
+
+    
+    def _get_grad(self):
+        return self.dx, self.dwx, self.dwh, self.db
+
+
+class RNNLayer():
+    def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
+        self.differentiable = True
+        self.parameter = OrderedDict()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+
+        if initialize == "He":
+            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * (np.sqrt(2 / input_size))
+            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * (np.sqrt(2 / hidden_size))
+            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)    
+
+        elif initialize == "Xavier":
+            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * np.sqrt(input_size)
+            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * np.sqrt(hidden_size)
+            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
+
+        elif initialize == "None":
+            self.parameter["weight_x"] = 0.01 * np.random.randn(input_size, hidden_size).astype(np.float32)
+            self.parameter["weight_h"] = 0.01 * np.random.randn(hidden_size, hidden_size).astype(np.float32)
+            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
+
+        self.h = None
+        self.hidden_value = np.array([])
+        self.stateful = "stateful"
+        self.dx = None
+        self.dw = None
+        self.db = None
+        self.temp = None
+
+
+    def __repr__(self) -> str:
+        return "RNNLayer"
+
+    
+    def _forward(self, x):
+        batch_size, n_timestep, _ = x.shape
+        hidden_state = np.empty((batch_size, n_timestep, self.input_size))
+
+        
+
+
+
 
 class BatchNorm():
     def __init__(self, epsilon = 1e-8):
@@ -417,7 +590,7 @@ class BatchNorm():
 
     def _forward(self, x):
         self.x = x
-        result = np.dot(x, self.parameter["weight"]) + self.parameter["bias"]
+        result = np.matmul(x, self.parameter["weight"]) + self.parameter["bias"]
         return result
 
     def __repr__(self) -> str:
