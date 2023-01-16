@@ -19,8 +19,16 @@ class SGDOptimizer(BaseOptimizer):
         for layer_name in model.sequence:
             layer = model.network[layer_name]
             if layer.differentiable:
-                model.network[layer_name].parameter["weight"] -= (self.lr * layer.dw)
-                model.network[layer_name].parameter["bias"] -= (self.lr * layer.db)
+                if repr(layer) == "RNNLayer":
+                    pass
+
+                elif repr(layer) == "LSTMLayer":
+                    pass
+
+                else:
+                    grad = layer.get_gradient()
+                    model.network[layer_name].parameter["weight"] -= (self.lr * grad["dw"])
+                    model.network[layer_name].parameter["bias"] -= (self.lr * grad["db"])
 
 
 class MomentumOptimizer(BaseOptimizer):
@@ -37,8 +45,18 @@ class MomentumOptimizer(BaseOptimizer):
                 layer = model.network[layer_name]
                 if layer.differentiable:
                     self.v[layer_name] = OrderedDict()
-                    self.v[layer_name]["weight"] = np.zeros_like(layer.parameter["weight"])
-                    self.v[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
+
+                    if repr(layer) == "RNNLayer":
+                        self.v[layer_name]["weight_x"] = np.zeros_like(layer.parameter["weight_x"])
+                        self.v[layer_name]["weight_h"] = np.zeros_like(layer.parameter["weight_h"])
+                        self.v[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
+
+                    elif repr(layer) == "LSTMLayer":
+                        pass
+
+                    else:
+                        self.v[layer_name]["weight"] = np.zeros_like(layer.parameter["weight"])
+                        self.v[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
 
 
         for layer_name in model.sequence:
