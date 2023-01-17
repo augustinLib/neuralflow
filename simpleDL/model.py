@@ -1,6 +1,7 @@
 import numpy as np
 from collections import OrderedDict
 from simpleDL.function import *
+from copy import deepcopy
 
 
 class BackBone:
@@ -109,8 +110,8 @@ class DenseLayer():
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dw"] = self.dw
-        grad["db"] = self.db
+        grad["dw"] = deepcopy(self.dw)
+        grad["db"] = deepcopy(self.db)
 
         return grad
 
@@ -190,7 +191,7 @@ class EmbeddingLayer():
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dw"] = self.dw
+        grad["dw"] = deepcopy(self.dw)
 
         return grad
 
@@ -299,8 +300,8 @@ class ConvLayer():
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dw"] = self.dw
-        grad["db"] = self.db
+        grad["dw"] = deepcopy(self.dw)
+        grad["db"] = deepcopy(self.db)
 
         return grad
 
@@ -428,67 +429,6 @@ class MaxPoolingLayer():
         return img[:, :, self.padding:input_height + self.padding, self.padding:input_width + self.padding]
 
 
-class RNNCell2():
-    def __init__(self, input_size, hidden_size, bidirectional = True, initialize = "He"):
-        self.differentiable = True
-        self.parameter = OrderedDict()
-        self.input_size = input_size
-        self.hidden_size = hidden_size        
-        self.dx = None
-        self.dwx = None
-        self.dwh = None
-        self.db = None
-        self.cache = None
-
-        if initialize == "He":
-            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * (np.sqrt(2 / input_size))
-            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * (np.sqrt(2 / hidden_size))
-            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)    
-
-        elif initialize == "Xavier":
-            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * np.sqrt(input_size)
-            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * np.sqrt(hidden_size)
-            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
-
-        elif initialize == "None":
-            self.parameter["weight_x"] = 0.01 * np.random.randn(input_size, hidden_size).astype(np.float32)
-            self.parameter["weight_h"] = 0.01 * np.random.randn(hidden_size, hidden_size).astype(np.float32)
-            self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
-
-
-    def __repr__(self) -> str:
-        return "RNNCell"
-
-
-    def __call__(self, *arg):
-        result = self._forward(*arg)
-        return result
-
-    
-    def _forward(self, x, h_t_prev):
-        temp_t = np.matmul(h_t_prev, self.parameter["weight_h"]) + np.matmul(x, self.parameter["weight_x"]) + self.parameter["bias"] 
-        result_t = np.tanh(temp_t)
-        # self.cache에 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 저장
-        self.cache = x, h_t_prev, result_t
-
-        return result_t
-
-
-    def _backward(self, input):
-        # self.cache에 저장된 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 불러오기
-        x, h_t_prev, result_t = self.cache
-        # dtanh = 1 - tanh(x)^2
-        dtanh = input * (1 - result_t ** 2)
-        self.db = np.sum(dtanh, axis=0)
-        self.dwh = np.matmul(h_t_prev.T, dtanh)
-        self.dwx = np.matmul(x.T, dtanh)
-        h_result = np.matmul(dtanh, self.parameter["weight_h"].T)
-        x_result = np.matmul(dtanh, self.parameter["weight_x"].T)
-        self.dx = x_result
-
-        return x_result, h_result
-
-
 class RNNCell():
     def __init__(self, parameter):
         self.parameter = parameter     
@@ -509,11 +449,14 @@ class RNNCell():
 
     
     def _forward(self, x, h_t_prev):
+        # (batch_size, hidden_size) x (hidden_size, hidden_size) + (batch_size, input_dim) x (input_dim, hidden_size)
+        # => (batch_size, hidden_size)
         temp_t = np.matmul(h_t_prev, self.parameter["weight_h"]) + np.matmul(x, self.parameter["weight_x"]) + self.parameter["bias"] 
         result_t = np.tanh(temp_t)
         # self.cache에 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 저장
         self.cache = x, h_t_prev, result_t
 
+        # (batch_size, hidden_size)
         return result_t
 
 
@@ -532,8 +475,13 @@ class RNNCell():
         return x_result, h_result
 
     
-    def _get_grad(self):
-        return self.dx, self.dwx, self.dwh, self.db
+    def _get_gradient(self):
+        dx = deepcopy(self.dx)
+        dwx = deepcopy(self.dwx)
+        dwh = deepcopy(self.dwh)
+        db = deepcopy(self.db)
+
+        return dx, dwx, dwh, db
 
 
 class RNNLayer():
@@ -559,10 +507,12 @@ class RNNLayer():
             self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
 
         self.h = None
-        self.hidden_value = np.array([])
+        self.dh = None
+        self.layer = None
         self.stateful = "stateful"
         self.dx = None
-        self.dw = None
+        self.dwx = None
+        self.dwh = None
         self.db = None
         self.temp = None
 
@@ -570,15 +520,61 @@ class RNNLayer():
     def __repr__(self) -> str:
         return "RNNLayer"
 
+
+    def __call__(self, arg):
+        result = self._forward(arg)
+        return result
+        
     
     def _forward(self, x):
         batch_size, n_timestep, _ = x.shape
-        hidden_state = np.empty((batch_size, n_timestep, self.input_size))
+        hidden_state = np.empty((batch_size, n_timestep, self.hidden_size)).astype(np.float32)
+        self.layer = []
+
+        if not self.stateful or self.h is None:
+            self.h = np.zeros((batch_size, self.hidden_size)).astype(np.float32)
+        
+        for timestep in range(n_timestep):
+            rnn_cell = RNNCell(self.parameter)
+            # self.h : (batch_size, 1, hidden_size)
+            self.h = rnn_cell(x[:, timestep, :], self.h)
+            hidden_state[:, timestep, :] = self.h
+            self.layer.append(rnn_cell)
+
+        return hidden_state
+
+    
+    def _backward(self, input):
+        batch_size, n_timestep, _ = input.shape
+        dx = np.empty((batch_size, n_timestep, self.input_size)).astype(np.float32)
+        dh = 0
+
+        for timestep in reversed(range(n_timestep)):
+            rnn_cell = self.layer[timestep]
+            dx_t, dh = rnn_cell._backward(input[:, timestep, :] + dh)
+            dx[:, timestep, :] = dx_t
+
+            _, dwx, dwh, db = rnn_cell._get_gradient()
+            self.dwx += dwx
+            self.dwh += dwh
+            self.db += db
+            
+        self.dh = dh
+        
+        # input으로 backpropagation result 전달
+        return dx
+
+
+    def get_gradient(self):
+        grad = OrderedDict()
+        grad["dwx"] = deepcopy(self.dwx)
+        grad["dwh"] = deepcopy(self.dwh)
+        grad["db"] = deepcopy(self.db)
+
+        return grad
+
 
         
-
-
-
 
 class BatchNorm():
     def __init__(self, epsilon = 1e-8):
