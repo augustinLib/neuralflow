@@ -5,6 +5,12 @@ from collections import OrderedDict
 class BaseOptimizer():
     def __init__(self, lr = 0.01):
         self.lr = lr
+        self.param_grad_dict = OrderedDict()
+        self.param_grad_dict["weight"] = "dw"
+        self.param_grad_dict["weight_x"] = "dwx"
+        self.param_grad_dict["weight_h"] = "dwh"
+        self.param_grad_dict["bias"] = "db"
+        
         
     def __repr__(self) -> str:
         return "Optimizer"
@@ -16,19 +22,17 @@ class SGDOptimizer(BaseOptimizer):
         
     
     def update(self, model):
+        # update parameter
         for layer_name in model.sequence:
             layer = model.network[layer_name]
+
+            # only update differentiable layer
             if layer.differentiable:
-                if repr(layer) == "RNNLayer":
-                    pass
-
-                elif repr(layer) == "LSTMLayer":
-                    pass
-
-                else:
-                    grad = layer.get_gradient()
-                    model.network[layer_name].parameter["weight"] -= (self.lr * grad["dw"])
-                    model.network[layer_name].parameter["bias"] -= (self.lr * grad["db"])
+                grad = layer.get_gradient()
+                param_list = list(layer.parameter.keys())
+                
+                for param in param_list:
+                    model.network[layer_name].parameter[param] -= (self.lr * grad[self.param_grad_dict[param]])
 
 
 class MomentumOptimizer(BaseOptimizer):
@@ -40,33 +44,30 @@ class MomentumOptimizer(BaseOptimizer):
     
     def update(self, model):
         if self.v is None:
-            self.v = {}
+
+            # initialize v
+            self.v = OrderedDict()
             for layer_name in model.sequence:
                 layer = model.network[layer_name]
                 if layer.differentiable:
+                    param_list = list(layer.parameter.keys())
                     self.v[layer_name] = OrderedDict()
 
-                    if repr(layer) == "RNNLayer":
-                        self.v[layer_name]["weight_x"] = np.zeros_like(layer.parameter["weight_x"])
-                        self.v[layer_name]["weight_h"] = np.zeros_like(layer.parameter["weight_h"])
-                        self.v[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
+                    for param in param_list:
+                        self.v[layer_name][param] = np.zeros_like(layer.parameter[param])
 
-                    elif repr(layer) == "LSTMLayer":
-                        pass
-
-                    else:
-                        self.v[layer_name]["weight"] = np.zeros_like(layer.parameter["weight"])
-                        self.v[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
-
-
+        # update parameter
         for layer_name in model.sequence:
             layer = model.network[layer_name]
-            if layer.differentiable:
-                self.v[layer_name]["weight"] = self.momentum * self.v[layer_name]["weight"] - (self.lr * layer.dw)
-                self.v[layer_name]["bias"] = self.momentum * self.v[layer_name]["bias"] - (self.lr * layer.db)
 
-                model.network[layer_name].parameter["weight"] += self.v[layer_name]["weight"]
-                model.network[layer_name].parameter["bias"] += self.v[layer_name]["bias"]
+            # only update differentiable layer
+            if layer.differentiable:
+                param_list = list(layer.parameter.keys())
+                grad = layer.get_gradient()
+
+                for param in param_list:
+                    self.v[layer_name][param] = self.momentum * self.v[layer_name][param] - (self.lr * grad[self.param_grad_dict[param]])
+                    model.network[layer_name].parameter[param] += self.v[layer_name][param]
 
 
 class AdaGrad(BaseOptimizer):
@@ -77,25 +78,32 @@ class AdaGrad(BaseOptimizer):
 
     def update(self, model):
         if self.h is None:
+            # initialize h
             self.h = OrderedDict()
             for layer_name in model.sequence:
                 layer = model.network[layer_name]
                 if layer.differentiable:
                     self.h[layer_name] = OrderedDict()
-                    self.h[layer_name]["weight"] = np.zeros_like(layer.parameter["weight"])
-                    self.h[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
+                    param_list = list(layer.parameter.keys())
+    
+                    for param in param_list:
+                        self.h[layer_name][param] = np.zeros_like(layer.parameter[param])
 
 
+        # update parameter
         for layer_name in model.sequence:
             layer = model.network[layer_name]
+
+            # only update differentiable layer
             if layer.differentiable:
-                # update h
-                self.h[layer_name]["weight"] = layer.dw * layer.dw
-                self.h[layer_name]["bias"] = layer.db * layer.db
-                
-                # update parameter
-                model.network[layer_name].parameter["weight"] -= self.lr * layer.dw / (np.sqrt(self.h[layer_name]["weight"]) + 1e-7)
-                model.network[layer_name].parameter["bias"] -= self.lr * layer.db / (np.sqrt(self.h[layer_name]["bias"]) + 1e-7)
+                grad = layer.get_gradient()
+                param_list = list(layer.parameter.keys())
+
+                for param in param_list:
+                    # update h
+                    self.h[layer_name][param] = grad[self.param_grad_dict[param]] * grad[self.param_grad_dict[param]]
+                    # update parameter
+                    model.network[layer_name].parameter[param] -= self.lr * grad[self.param_grad_dict[param]] / (np.sqrt(self.h[layer_name][param]) + 1e-7)
 
 
 class Adam(BaseOptimizer):
@@ -111,35 +119,38 @@ class Adam(BaseOptimizer):
 
     def update(self, model):
         if self.m is None:
+            
+            #initialize m, v
             self.m, self.v = OrderedDict(), OrderedDict()
             for layer_name in model.sequence:
                 layer = model.network[layer_name]
                 if layer.differentiable:
                     self.m[layer_name], self.v[layer_name] = OrderedDict(), OrderedDict()
+                    param_list = list(layer.parameter.keys())
 
-                    self.m[layer_name]["weight"] = np.zeros_like(layer.parameter["weight"])
-                    self.m[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
-
-                    self.v[layer_name]["weight"] = np.zeros_like(layer.parameter["weight"])
-                    self.v[layer_name]["bias"] = np.zeros_like(layer.parameter["bias"])
-
+                    for param in param_list:
+                        self.m[layer_name][param] = np.zeros_like(layer.parameter[param])
+                        self.v[layer_name][param] = np.zeros_like(layer.parameter[param])
+                        
         self.iter += 1
 
         for layer_name in model.sequence:
             layer = model.network[layer_name]
+
+            # only update differentiable layer
             if layer.differentiable:
-                # update m, v
-                self.m[layer_name]["weight"] = self.b1 * self.m[layer_name]["weight"] + (1-self.b1) * layer.dw
-                self.m[layer_name]["bias"] = self.b1 * self.m[layer_name]["bias"] + (1-self.b1) * layer.db
-                self.v[layer_name]["weight"] = self.b2 * self.v[layer_name]["weight"] + (1-self.b2) * (layer.dw ** 2)
-                self.v[layer_name]["bias"] = self.b2 * self.v[layer_name]["bias"] + (1-self.b2) * (layer.db ** 2)
-
-                m_hat_weight = self.m[layer_name]["weight"] / (1 - (self.b1 ** self.iter))
-                m_hat_bias = self.m[layer_name]["bias"] / (1 - (self.b1 ** self.iter))
-                v_hat_weight = self.v[layer_name]["weight"] / (1 - (self.b2 ** self.iter))
-                v_hat_bias = self.v[layer_name]["bias"] / (1 - (self.b2 ** self.iter))
                 
-                # update parameter
-                model.network[layer_name].parameter["weight"] -= self.lr / (np.sqrt(v_hat_weight) + self.epsilon) * m_hat_weight
-                model.network[layer_name].parameter["bias"] -= self.lr / (np.sqrt(v_hat_bias) + self.epsilon) * m_hat_bias
+                grad = layer.get_gradient()
+                param_list = list(layer.parameter.keys())
 
+                for param in param_list:
+                    # update m, v
+                    self.m[layer_name][param] = self.b1 * self.m[layer_name][param] + (1-self.b1) * grad[self.param_grad_dict[param]]
+                    self.v[layer_name][param] = self.b2 * self.v[layer_name][param] + (1-self.b2) * (grad[self.param_grad_dict[param]] ** 2)
+
+                    # update m_hat, v_hat
+                    m_hat = self.m[layer_name][param] / (1 - (self.b1 ** self.iter))
+                    v_hat = self.v[layer_name][param] / (1 - (self.b2 ** self.iter))
+
+                    # update parameter
+                    model.network[layer_name].parameter[param] -= self.lr / (np.sqrt(v_hat) + self.epsilon) * m_hat
