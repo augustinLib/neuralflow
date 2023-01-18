@@ -70,11 +70,20 @@ class DenseLayer():
 
     
     def _forward(self, x):
-        # for 4-dim tensor
+        if x.ndim == 3:
+            batch_size, n_timestep, _ = x.shape
+            reshaped_x = x.reshape(batch_size * n_timestep, -1)
+            self.x = x
+            result = np.matmul(reshaped_x, self.parameter["weight"]) + self.parameter["bias"]
+            result = result.reshape(batch_size, n_timestep, -1)
+
+            return result
+
         self.origin_x_shape = x.shape
         x = x.reshape(x.shape[0], -1)
         self.x = x
         result = np.matmul(x, self.parameter["weight"]) + self.parameter["bias"]
+
         return result
 
     
@@ -92,6 +101,19 @@ class DenseLayer():
         self.db = bias에 대한 미분값
 
         """
+        if self.x.ndim == 3:
+            x = self.x
+            batch_size, n_timestep, _ = x.shape
+            input = input.reshape(batch_size * n_timestep, -1)
+            reshaped_x = x.reshape(batch_size * n_timestep, -1)
+
+            self.db = np.sum(input, axis=0)
+            self.dw = np.dot(reshaped_x.T, input)
+            dx = np.dot(input, self.parameter["weight"].T)
+            dx = dx.reshape(*x.shape)
+
+            return dx
+
         dx = np.matmul(input, self.parameter["weight"].T)
         self.dw = np.matmul(self.x.T, input)
         self.db = np.sum(input, axis=0)
@@ -547,6 +569,9 @@ class RNNLayer():
     def _backward(self, input):
         batch_size, n_timestep, _ = input.shape
         dx = np.empty((batch_size, n_timestep, self.input_size)).astype(np.float32)
+        temp_dwx = 0
+        temp_dwh = 0
+        temp_db = 0
         dh = 0
 
         for timestep in reversed(range(n_timestep)):
@@ -555,10 +580,13 @@ class RNNLayer():
             dx[:, timestep, :] = dx_t
 
             _, dwx, dwh, db = rnn_cell._get_gradient()
-            self.dwx += dwx
-            self.dwh += dwh
-            self.db += db
-            
+            temp_dwx += dwx
+            temp_dwh += dwh
+            temp_db += db
+
+        self.dwx = temp_dwx
+        self.dwh = temp_dwh
+        self.db = temp_db
         self.dh = dh
         
         # input으로 backpropagation result 전달
