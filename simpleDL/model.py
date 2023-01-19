@@ -56,8 +56,8 @@ class DenseLayer():
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
 
 
-        self.dw = None
-        self.db = None
+        self.dw = np.zeros_like(self.parameter["weight"])
+        self.db = np.zeros_like(self.parameter["bias"])
 
 
     def __call__(self, arg):
@@ -65,7 +65,7 @@ class DenseLayer():
         return result
 
     
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "DenseLayer"
 
     
@@ -107,21 +107,25 @@ class DenseLayer():
             input = input.reshape(batch_size * n_timestep, -1)
             reshaped_x = x.reshape(batch_size * n_timestep, -1)
 
-            self.db = np.sum(input, axis=0)
-            self.dw = np.dot(reshaped_x.T, input)
-            dx = np.dot(input, self.parameter["weight"].T)
+            db = np.sum(input, axis=0)
+            dw = np.matmul(reshaped_x.T, input)
+            dx = np.matmul(input, self.parameter["weight"].T)
             dx = dx.reshape(*x.shape)
+            
+            self.dw[...] = dw
+            self.db[...] = db
 
             return dx
+        
+        else:
+            dx = np.matmul(input, self.parameter["weight"].T)
+            self.dw = np.matmul(self.x.T, input)
+            self.db = np.sum(input, axis=0)
 
-        dx = np.matmul(input, self.parameter["weight"].T)
-        self.dw = np.matmul(self.x.T, input)
-        self.db = np.sum(input, axis=0)
+            # for 4-dim tensor
+            dx = dx.reshape(*self.origin_x_shape)
 
-        # for 4-dim tensor
-        dx = dx.reshape(*self.origin_x_shape)
-
-        return dx
+            return dx
 
 
     def load_parameter(self, parameter: tuple):
@@ -132,8 +136,8 @@ class DenseLayer():
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dw"] = deepcopy(self.dw)
-        grad["db"] = deepcopy(self.db)
+        grad["dw"] = self.dw
+        grad["db"] = self.db
 
         return grad
 
@@ -154,8 +158,9 @@ class Embedding():
         """
         self.differentiable = True
         self.index = None
-        self.parameter = parameter
-        self.dw = None
+        self.parameter = OrderedDict()
+        self.parameter["weight"] = parameter["weight"]
+        self.dw = np.zeros_like(self.parameter["weight"])
 
 
     def __call__(self, arg):
@@ -163,7 +168,7 @@ class Embedding():
         return result
 
     
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "Embedding"
 
     
@@ -188,14 +193,15 @@ class Embedding():
         self.db = bias에 대한 미분값
 
         """
-        self.dw = np.zeros_like(self.parameter["weight"])
-        np.add.at(self.dw, self.index, input)
+        dw = self.dw
+        dw[...] = 0
+        np.add.at(dw, self.index, input)
 
         return None
 
 
     def _get_gradient(self):
-        dw = deepcopy(self.dw)
+        dw = self.dw
 
         return dw
 
@@ -221,8 +227,8 @@ class EmbeddingLayer():
         else:
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
 
-        self.embedding_cell = None
-        self.dw = np.zeros((vocab_size, hidden_size)).astype(np.float32)
+        self.layer = None
+        self.dw = np.zeros_like(self.parameter["weight"]).astype(np.float32)
 
 
     def __call__(self, arg):
@@ -230,7 +236,7 @@ class EmbeddingLayer():
         return result
 
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "EmbeddingLayer"
 
 
@@ -238,29 +244,33 @@ class EmbeddingLayer():
         batch_size, n_timestep = x.shape
 
         result = np.empty((batch_size, n_timestep, self.hidden_size)).astype(np.float32)
-        self.embedding_cell = []
-
+        self.layer = []
+        
         for timestep in range(n_timestep):
-            layer = Embedding(self.parameter)
-            result[:, timestep, :] = layer._forward(x[:, timestep])
-            self.embedding_cell.append(layer)
+            embedding_cell = Embedding(self.parameter)
+            result[:, timestep, :] = embedding_cell._forward(x[:, timestep])
+            self.layer.append(embedding_cell)
 
         return result
 
-    def _backward(self, input):
-        batch_size, n_timestep, hidden_size = input.shape
+    def _backward(self, dout):
+        w = self.parameter["weight"]
+        batch_size, n_timestep, hidden_size = dout.shape
 
+        dw = np.zeros_like(w).astype(np.float32)
         for timestep in range(n_timestep):
-            layer = self.embedding_cell[timestep]
-            layer._backward(input[:, timestep, :])
-            dw = layer._get_gradient()
-            self.dw += dw
+            embedding_cell = self.layer[timestep]
+            embedding_cell._backward(dout[:, timestep, :])
+            temp_dw = embedding_cell._get_gradient()
+            dw += temp_dw
+        
+        self.dw[...] = dw
 
         return None
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dw"] = deepcopy(self.dw)
+        grad["dw"] = self.dw
 
         return grad
 
@@ -500,7 +510,11 @@ class MaxPoolingLayer():
 
 class RNNCell():
     def __init__(self, parameter):
-        self.parameter = parameter     
+        self.parameter = OrderedDict()
+        self.differentiable = True    
+        self.parameter["weight_x"] = parameter["weight_x"]
+        self.parameter["weight_h"] = parameter["weight_h"]
+        self.parameter["bias"] = parameter["bias"] 
         self.dx = None
         self.dwx = None
         self.dwh = None
@@ -545,10 +559,10 @@ class RNNCell():
 
     
     def _get_gradient(self):
-        dx = deepcopy(self.dx)
-        dwx = deepcopy(self.dwx)
-        dwh = deepcopy(self.dwh)
-        db = deepcopy(self.db)
+        dx = self.dx
+        dwx = self.dwx
+        dwh = self.dwh
+        db = self.db
 
         return dx, dwx, dwh, db
 
@@ -596,12 +610,15 @@ class RNNLayer():
         
     
     def _forward(self, x):
-        batch_size, n_timestep, _ = x.shape
-        hidden_state = np.empty((batch_size, n_timestep, self.hidden_size)).astype(np.float32)
+        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+        batch_size, n_timestep, input_dim = x.shape
+        input_dim, hidden_size = wx.shape
+        
+        hidden_state = np.empty((batch_size, n_timestep, hidden_size)).astype(np.float32)
         self.layer = []
 
         if not self.stateful or self.h is None:
-            self.h = np.zeros((batch_size, self.hidden_size)).astype(np.float32)
+            self.h = np.zeros((batch_size, hidden_size)).astype(np.float32)
         
         for timestep in range(n_timestep):
             rnn_cell = RNNCell(self.parameter)
@@ -613,28 +630,33 @@ class RNNLayer():
         return hidden_state
 
     
-    def _backward(self, input):
-        batch_size, n_timestep, _ = input.shape
-        dx = np.empty((batch_size, n_timestep, self.input_size)).astype(np.float32)
-        temp_dwx = 0
-        temp_dwh = 0
-        temp_db = 0
-        dh = 0
+    def _backward(self, dh):
+        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+        batch_size, n_timestep, hidden_size  = dh.shape
+        input_dim, hidden_size = wx.shape
+        
+        dx = np.empty((batch_size, n_timestep, input_dim)).astype(np.float32)
+        
+        dwx = np.zeros_like(wx).astype(np.float32)
+        dwh = np.zeros_like(wh).astype(np.float32)
+        db = np.zeros_like(b).astype(np.float32)
+
+        dh_t = 0
 
         for timestep in reversed(range(n_timestep)):
             rnn_cell = self.layer[timestep]
-            dx_t, dh = rnn_cell._backward(input[:, timestep, :] + dh)
+            dx_t, dh_t = rnn_cell._backward(dh[:, timestep, :] + dh_t)
             dx[:, timestep, :] = dx_t
 
-            _, dwx, dwh, db = rnn_cell._get_gradient()
-            temp_dwx += dwx
-            temp_dwh += dwh
-            temp_db += db
+            _, temp_dwx, temp_dwh, temp_db = rnn_cell._get_gradient()
+            dwx += temp_dwx
+            dwh += temp_dwh
+            db += temp_db
 
-        self.dwx = temp_dwx
-        self.dwh = temp_dwh
-        self.db = temp_db
-        self.dh = dh
+        self.dwx = dwx
+        self.dwh = dwh
+        self.db = db
+        self.dh = dh_t
         
         # input으로 backpropagation result 전달
         return dx
@@ -642,11 +664,19 @@ class RNNLayer():
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dwx"] = deepcopy(self.dwx)
-        grad["dwh"] = deepcopy(self.dwh)
-        grad["db"] = deepcopy(self.db)
+        grad["dwx"] = self.dwx
+        grad["dwh"] = self.dwh
+        grad["db"] = self.db
 
         return grad
+    
+    
+    def load_state(self, h):
+        self.h = h
+
+
+    def reset_state(self):
+        self.h = None
         
         
 class LSTMCell():
