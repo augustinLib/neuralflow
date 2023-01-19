@@ -45,7 +45,7 @@ class DenseLayer():
             self.parameter["bias"] = np.zeros(output_size)    
 
         elif initialize == "Xavier":
-            self.parameter["weight"] = np.random.randn(input_size, output_size) * np.sqrt(input_size)
+            self.parameter["weight"] = np.random.randn(input_size, output_size) * np.sqrt(1/input_size)
             self.parameter["bias"] = np.zeros(output_size)
 
         elif initialize == "None":
@@ -138,8 +138,8 @@ class DenseLayer():
         return grad
 
 
-class EmbeddingLayer():
-    def __init__(self, vocab_size: int, hidden_size: int, initialize: str = "He"):
+class Embedding():
+    def __init__(self, parameter):
         """
         Initialize EmbeddingLayer
 
@@ -152,27 +152,10 @@ class EmbeddingLayer():
         initialize (str, optional) : 가중치 초기화 방법 설정. Default: "He"
 
         """
-        self.vocab_size = vocab_size
-        self.hidden_size = hidden_size
         self.differentiable = True
         self.index = None
-        self.parameter = OrderedDict()
-
-        if initialize == "He":
-            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
-
-
-        elif initialize == "Xavier":
-            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(vocab_size)
-
-
-        elif initialize == "None":
-            self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
-
-        else:
-            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
-
-        self.dw = np.zeros((vocab_size, hidden_size)).astype(np.float32)
+        self.parameter = parameter
+        self.dw = None
 
 
     def __call__(self, arg):
@@ -181,7 +164,7 @@ class EmbeddingLayer():
 
     
     def __repr__(self) -> str:
-        return "EmbeddingLayer"
+        return "Embedding"
 
     
     def _forward(self, index):
@@ -205,11 +188,75 @@ class EmbeddingLayer():
         self.db = bias에 대한 미분값
 
         """
-        # self.dw = np.zeros_like(self.parameter["weight"])
+        self.dw = np.zeros_like(self.parameter["weight"])
         np.add.at(self.dw, self.index, input)
 
         return None
 
+
+    def _get_gradient(self):
+        dw = deepcopy(self.dw)
+
+        return dw
+
+
+class EmbeddingLayer():
+    def __init__(self, vocab_size: int, hidden_size: int, initialize = "He"):
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.differentiable = True
+        self.parameter = OrderedDict()
+
+        if initialize == "He":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
+
+
+        elif initialize == "Xavier":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
+
+
+        elif initialize == "None":
+            self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+
+        else:
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
+
+        self.embedding_cell = None
+        self.dw = np.zeros((vocab_size, hidden_size)).astype(np.float32)
+
+
+    def __call__(self, arg):
+        result = self._forward(arg)
+        return result
+
+
+    def __repr__(self) -> str:
+        return "EmbeddingLayer"
+
+
+    def _forward(self, x):
+        batch_size, n_timestep = x.shape
+
+        result = np.empty((batch_size, n_timestep, self.hidden_size)).astype(np.float32)
+        self.embedding_cell = []
+
+        for timestep in range(n_timestep):
+            layer = Embedding(self.parameter)
+            result[:, timestep, :] = layer._forward(x[:, timestep])
+            self.embedding_cell.append(layer)
+
+        return result
+
+    def _backward(self, input):
+        batch_size, n_timestep, hidden_size = input.shape
+
+        for timestep in range(n_timestep):
+            layer = self.embedding_cell[timestep]
+            layer._backward(input[:, timestep, :])
+            dw = layer._get_gradient()
+            self.dw += dw
+
+        return None
 
     def get_gradient(self):
         grad = OrderedDict()
@@ -270,7 +317,7 @@ class ConvLayer():
             self.parameter["bias"] = np.zeros(self.output_channel).astype(np.float32) 
 
         elif initialize == "Xavier":
-            self.parameter["weight"] = np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width).astype(np.float32) * np.sqrt(self.fan_in)
+            self.parameter["weight"] = np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width).astype(np.float32) * np.sqrt(1/ self.fan_in)
             self.parameter["bias"] = np.zeros(self.output_channel).astype(np.float32)
 
         elif initialize == "None":
@@ -519,8 +566,8 @@ class RNNLayer():
             self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)    
 
         elif initialize == "Xavier":
-            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * np.sqrt(input_size)
-            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * np.sqrt(hidden_size)
+            self.parameter["weight_x"] = np.random.randn(input_size, hidden_size).astype(np.float32) * np.sqrt(1/input_size)
+            self.parameter["weight_h"] = np.random.randn(hidden_size, hidden_size).astype(np.float32) * np.sqrt(1/hidden_size)
             self.parameter["bias"] = np.zeros(hidden_size).astype(np.float32)
 
         elif initialize == "None":
@@ -657,8 +704,12 @@ class Model(BackBone):
             layer = self.network[layer_name]
 
             if layer.differentiable:
-                shape = layer.parameter["weight"].shape
-                string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
+                if repr(layer) == "RNNLayer":
+                    shape = layer.parameter["weight_x"].shape
+                    string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
+                else:
+                    shape = layer.parameter["weight"].shape
+                    string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
             else:
                 string_list.append(f"{i}. {layer_name} : {layer}\n")
 

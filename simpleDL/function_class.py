@@ -117,12 +117,12 @@ class CrossEntropyLoss():
             self.cache = (self.true, pred_sentence, mask, (batch_size, n_timestep, vocab_size))
             
             return self.loss
+        else:
+            self.pred = softmax(pred)
+            self.true = true
+            self.loss = cross_entropy_error(self.pred, self.true)
 
-        self.pred = softmax(pred)
-        self.true = true
-        self.loss = cross_entropy_error(self.pred, self.true)
-
-        return self.loss
+            return self.loss
 
     def _backward(self):
         if self.cache is not None:
