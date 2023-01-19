@@ -88,13 +88,14 @@ class CrossEntropyLoss():
         self.cache = None
         self.ignore_label = -1
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "Function"
 
 
     def __call__(self, *arg):
         result = self._forward(*arg)
         return result
+
 
     def _forward(self, pred, true):
         if pred.ndim == 3:
@@ -104,6 +105,7 @@ class CrossEntropyLoss():
                 true = true.argmax(axis=2)
             
             mask = (true != self.ignore_label)
+            
             self.pred = pred.reshape(batch_size * n_timestep, vocab_size)
             self.true = true.reshape(batch_size * n_timestep)
             mask = mask.reshape(batch_size * n_timestep)
