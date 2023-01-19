@@ -508,7 +508,7 @@ class RNNCell():
         self.cache = None
 
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "RNNCell"
 
 
@@ -586,7 +586,7 @@ class RNNLayer():
         self.temp = None
 
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "RNNLayer"
 
 
@@ -647,9 +647,203 @@ class RNNLayer():
         grad["db"] = deepcopy(self.db)
 
         return grad
-
-
         
+        
+class LSTMCell():
+    def __init__(self, parameter):
+        self.differentiable = True
+        self.parameter = OrderedDict()
+        self.parameter["weight_x"] = parameter["weight_x"]
+        self.parameter["weight_h"] = parameter["weight_h"]
+        self.parameter["bias"] = parameter["bias"]
+        self.cache = None
+        self.dx = None
+        self.dwx = None
+        self.dwh = None
+        self.db = None
+        
+        
+    def __call__(self, *arg):
+        result = self._forward(*arg)
+        return result
+        
+        
+    def _forward(self, x, h_t_prev, c_t_prev):
+        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+        batch_size, hidden_size = h_t_prev.shape
+        
+        a = np.matmul(x, wx) + np.matmul(h_t_prev, wh) + b
+        f_temp = a[:, :hidden_size]
+        g_temp = a[:, hidden_size:hidden_size*2]
+        i_temp = a[:, hidden_size*2:hidden_size*3]
+        o_temp = a[:, hidden_size*3:]
+        
+        f_result = sigmoid(f_temp)
+        g_result = np.tanh(g_temp)
+        i_result = sigmoid(i_temp)
+        o_result = sigmoid(o_temp)
+        
+        c_t = f_result * c_t_prev + g_result * i_result
+        h_t = o_result * np.tanh(c_t)
+        
+        self.cache = (x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t)
+        
+        return h_t, c_t
+    
+    
+    def _backward(self, dh_t_next, dc_t_next):
+        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+        x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t = self.cache
+        
+        tanh_c_t = np.tanh(c_t)
+        ds = dc_t_next + (dh_t_next * o_result) * (1-tanh_c_t**2)
+        do = dh_t_next * tanh_c_t
+        di = ds * g_result
+        dg = ds * i_result
+        df = ds * c_t_prev
+        
+        ddo = do * o_result * (1-o_result)
+        ddi = di * i_result * (1-i_result)
+        ddg = dg * g_result * (1-g_result**2)
+        ddf = df * f_result * (1-f_result)
+        
+        da = np.hstack((ddf, ddg, ddi, ddo))
+        
+        dc_t = ds * f_result
+
+        self.dwx = np.matmul(x.T, da)
+        self.dwh = np.matmul(h_t_prev.T, da)
+        self.db = da.sum(axis=0)
+        
+        dx = np.matmul(da, wx.T)
+        self.dx = dx
+        
+        dh_t = np.matmul(da, wh.T)
+        
+        return dx, dh_t, dc_t
+    
+
+    def _get_gradient(self):
+        dx = deepcopy(self.dx)
+        dwx = deepcopy(self.dwx)
+        dwh = deepcopy(self.dwh)
+        db = deepcopy(self.db)
+
+        return dx, dwx, dwh, db
+    
+    
+class LSTMLayer():
+    def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
+        self.differentiable = True
+        self.parameter = OrderedDict()
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+
+        if initialize == "He":
+            self.parameter["weight_x"] = np.random.randn(input_size, 4*hidden_size).astype(np.float32) * (np.sqrt(2 / input_size))
+            self.parameter["weight_h"] = np.random.randn(hidden_size, 4*hidden_size).astype(np.float32) * (np.sqrt(2 / hidden_size))
+            self.parameter["bias"] = np.zeros(4*hidden_size).astype(np.float32)    
+
+        elif initialize == "Xavier":
+            self.parameter["weight_x"] = np.random.randn(input_size, 4*hidden_size).astype(np.float32) * np.sqrt(1/input_size)
+            self.parameter["weight_h"] = np.random.randn(hidden_size, 4*hidden_size).astype(np.float32) * np.sqrt(1/hidden_size)
+            self.parameter["bias"] = np.zeros(4*hidden_size).astype(np.float32)
+
+        elif initialize == "None":
+            self.parameter["weight_x"] = 0.01 * np.random.randn(input_size, 4*hidden_size).astype(np.float32)
+            self.parameter["weight_h"] = 0.01 * np.random.randn(hidden_size, 4*hidden_size).astype(np.float32)
+            self.parameter["bias"] = np.zeros(4*hidden_size).astype(np.float32)
+
+        self.h = None
+        self.c = None
+        self.dh = None
+        self.layer = None
+        self.stateful = "stateful"
+        self.dx = None
+        self.dwx = None
+        self.dwh = None
+        self.db = None
+        self.temp = None
+        
+        
+    def __repr__(self):
+        return "LSTMLayer"
+    
+    
+    def __call__(self, *args):
+        result = self._forward(*args)
+        return result
+    
+    
+    def _forward(self, x):
+        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+        batch_size, n_timestep, input_dim = x.shape
+        hidden_size = wh.shape[0]
+        
+        self.layer = []
+        hidden_state = np.empty((batch_size, n_timestep, hidden_size)).astype(np.float32)
+        
+        if not self.stateful or self.h is None:
+            self.h = np.zeros((batch_size, hidden_size)).astype(np.float32)
+        if not self.stateful or self.c is None:
+            self.c = np.zeros((batch_size, hidden_size)).astype(np.float32)
+        
+        for timestep in range(n_timestep):
+            lstm_cell = LSTMCell(self.parameter)
+            self.h, self.c = lstm_cell(x[:, timestep, :], self.h, self.c)
+            hidden_state[:, timestep, :] = self.h
+            
+            self.layer.append(lstm_cell)
+            
+        return hidden_state
+    
+    
+    def _backward(self, dh):
+        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+        batch_size, n_timestep, hidden_size = dh.shape
+        input_dim = wx.shape[0]
+        
+        dx = np.empty((batch_size, n_timestep, input_dim)).astype(np.float32)
+        dh_t, dc_t = 0, 0
+        
+        dwx = np.zeros_like(wx).astype(np.float32)
+        dwh = np.zeros_like(wh).astype(np.float32)
+        db = np.zeros_like(b).astype(np.float32)
+        
+        for timestep in reversed(range(n_timestep)):
+            lstm_cell = self.layer[timestep]
+            dx_t, dh_t, dc_t = lstm_cell._backward(dh[:, timestep, :] + dh_t, dc_t)
+            dx[:, timestep, :] = dx_t
+            
+            _, temp_dwx, temp_dwh, temp_db = lstm_cell._get_gradient()
+            dwx += temp_dwx
+            dwh += temp_dwh
+            db += temp_db
+        
+        self.dwx = deepcopy(dwx)
+        self.dwh = deepcopy(dwh)
+        self.db = deepcopy(db)
+        self.dh = dh_t
+        
+        return dx
+    
+    def get_gradient(self):
+        grad = OrderedDict()
+        grad["dwx"] = deepcopy(self.dwx)
+        grad["dwh"] = deepcopy(self.dwh)
+        grad["db"] = deepcopy(self.db)
+
+        return grad
+    
+    
+    def load_state(self, h, c=None):
+        self.h, self.c = h, c
+    
+    
+    def reset_state(self):
+        self.h, self.c = None, None   
+    
+
 
 class BatchNorm():
     def __init__(self, epsilon = 1e-8):
@@ -664,7 +858,8 @@ class BatchNorm():
         result = np.matmul(x, self.parameter["weight"]) + self.parameter["bias"]
         return result
 
-    def __repr__(self) -> str:
+
+    def __repr__(self):
         return "BatchNormLayer"
 
 
@@ -697,7 +892,7 @@ class Model(BackBone):
         return result
 
     
-    def __str__(self) -> str:
+    def __str__(self):
         structure = ""
         string_list = []
         for i, layer_name in enumerate(self.sequence):
@@ -706,6 +901,13 @@ class Model(BackBone):
             if layer.differentiable:
                 if repr(layer) == "RNNLayer":
                     shape = layer.parameter["weight_x"].shape
+                    string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
+                    
+                elif repr(layer) == "LSTMLayer":
+                    shape = layer.parameter["weight_x"].shape
+                    lstm_in, lstm_out = shape
+                    lstm_out /= 4
+                    shape = (lstm_in, int(lstm_out))
                     string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
                 else:
                     shape = layer.parameter["weight"].shape
@@ -762,3 +964,6 @@ class Model(BackBone):
         self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
         self.count_dict[repr(layer)] += 1
         
+
+    def to_gpu(self):
+        pass
