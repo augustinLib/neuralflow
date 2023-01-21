@@ -1,8 +1,9 @@
-import numpy as np
+import pickle
+from copy import deepcopy
 from collections import OrderedDict
 from neuralflow.function import *
-from copy import deepcopy
 from neuralflow.gpu import *    
+from neuralflow.utils import *
 
 
 class BackBone:
@@ -35,7 +36,10 @@ class DenseLayer():
         """
         self.input_size = input_size
         self.output_size = output_size
+        self.changeability = False
         self.differentiable = True
+        self.tying = False
+        self.tied = False
         self.x = None
         # for 4-dim tensor
         self.orgin_x_shape = None
@@ -59,6 +63,7 @@ class DenseLayer():
 
         self.dw = np.zeros_like(self.parameter["weight"])
         self.db = np.zeros_like(self.parameter["bias"])
+        self.emb_dw = np.zeros_like(self.parameter["weight"]).T
 
 
     def __call__(self, arg):
@@ -137,7 +142,11 @@ class DenseLayer():
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dw"] = self.dw
+        if self.tying:
+            emb_dw_copied = deepcopy(self.emb_dw)
+            grad["dw"] = self.dw + emb_dw_copied.T
+        else:
+            grad["dw"] = self.dw
         grad["db"] = self.db
 
         return grad
@@ -159,6 +168,7 @@ class Embedding():
 
         """
         self.differentiable = True
+        self.changeability = False
         self.index = None
         self.parameter = OrderedDict()
         self.parameter["weight"] = parameter["weight"]
@@ -216,6 +226,8 @@ class EmbeddingLayer():
     def __init__(self, vocab_size: int, hidden_size: int, initialize = "He"):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
+        self.changeability = False
+        self.tied = False
         self.differentiable = True
         self.parameter = OrderedDict()
 
@@ -306,6 +318,8 @@ class ConvLayer():
 
         """
         self.differentiable = True
+        self.tied = False
+        self.changeability = False
         self.parameter = OrderedDict()
         self.input_channel = input_channel
         self.output_channel = output_channel
@@ -428,6 +442,9 @@ class ConvLayer():
 class MaxPoolingLayer():
     def __init__(self, kernel_size, stride = 1, padding = 0):
         self.differentiable = False
+        self.tied = False
+        self.changeability = False
+        
         if isinstance(kernel_size, int):
             self.kernel_width = kernel_size
             self.kernel_height = kernel_size
@@ -517,7 +534,8 @@ class MaxPoolingLayer():
 class RNNCell():
     def __init__(self, parameter):
         self.parameter = OrderedDict()
-        self.differentiable = True    
+        self.differentiable = True
+        self.changeability = False    
         self.parameter["weight_x"] = parameter["weight_x"]
         self.parameter["weight_h"] = parameter["weight_h"]
         self.parameter["bias"] = parameter["bias"] 
@@ -576,6 +594,8 @@ class RNNCell():
 class RNNLayer():
     def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
         self.differentiable = True
+        self.tied = False
+        self.changeability = False
         self.parameter = OrderedDict()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -688,6 +708,7 @@ class RNNLayer():
 class LSTMCell():
     def __init__(self, parameter):
         self.differentiable = True
+        self.changeability = False
         self.parameter = OrderedDict()
         self.parameter["weight_x"] = parameter["weight_x"]
         self.parameter["weight_h"] = parameter["weight_h"]
@@ -771,6 +792,8 @@ class LSTMCell():
 class LSTMLayer():
     def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
         self.differentiable = True
+        self.tied = False
+        self.changeability = False
         self.parameter = OrderedDict()
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -880,10 +903,13 @@ class LSTMLayer():
         self.h, self.c = None, None   
     
 
-class Dropout:
+class Dropout():
     def __init__(self, dropout_ratio=0.5):
         self.differentiable = False
+        self.tied = False
+        self.changeability = True
         self.dropout_ratio = dropout_ratio
+        self.train_flg=True
         self.mask = None
         
         
@@ -896,16 +922,24 @@ class Dropout:
         return result
     
     
-    def forward(self, x, train_flg=True):
-        if train_flg:
+    def _forward(self, x):
+        if self.train_flg:
             self.mask = np.random.rand(*x.shape) > self.dropout_ratio
             return x * self.mask
         else:
             return x * (1.0 - self.dropout_ratio)
 
 
-    def backward(self, dout):
+    def _backward(self, dout):
         return dout * self.mask
+    
+    
+    def train_state(self):
+        self.train_flg = True
+        
+    
+    def valid_state(self):
+        self.train_flg = False
 
 
 class BatchNorm():
@@ -1015,7 +1049,7 @@ class Model(BackBone):
                 grad[layer_name] = layer.get_gradient()
                 
         return grad
-                
+    
 
     def add_layer(self, layer):
         if repr(layer) not in self.count_dict.keys():
@@ -1025,6 +1059,53 @@ class Model(BackBone):
         self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
         self.count_dict[repr(layer)] += 1
         
+        
+    def train_state(self):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.changeability:
+                layer.train_flg = True
 
-    def to_gpu(self):
+    
+    def valid_state(self):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.changeability:
+                layer.train_flg = False
+                
+    
+    def reset_rnn_state(self):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if repr(layer) == "LSTMLayer" or repr(layer) == "RNNLayer":
+                layer.reset_state()
+                
+    
+    def weight_tying(self):
+        emb_layer_name = self.sequence[0]
+        final_dense_name = self.sequence[-1]
+        
+        emb_layer = self.network[emb_layer_name]
+        final_dense_layer = self.network[final_dense_name]
+        
+        emb_layer.tied = True
+        final_dense_layer.tying = True
+        
+        emb_layer.parameter["weight"] = final_dense_layer.parameter["weight"].T
+        final_dense_layer.emb_dw = emb_layer.dw
+        
+
+    def save_model(self, fn = None):
+        if file_name is None:
+            file_name = self.__class__.__name__ + '.pkl'
+            
+        params = [p.astype(np.float16) for p in self.network]
+        if GPU:
+            params = [to_cpu(p) for p in params]
+
+        with open(file_name, 'wb') as f:
+            pickle.dump(params, f)
+    
+    
+    def load_params(self, fn = None):
         pass

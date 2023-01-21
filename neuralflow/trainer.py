@@ -1,3 +1,4 @@
+import sys
 from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
 import plotly.express as px
@@ -229,7 +230,7 @@ class LanguageModelTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, max_grad = None, valid_dataloader = None):
+    def train(self, train_dataloader, valid_dataloader = None, max_grad = None, iter_num = 20):
         """
         Train model with train/valid data
 
@@ -240,11 +241,14 @@ class LanguageModelTrainer(BaseTrainer):
         valid_dataloader (iterable) : Valid dataloader that can iterate with batch size in valid dataset
 
         """
+        self.model.train_state()
         for epoch in range(self.n_epochs):
             print(f"epoch {epoch+1}")
             tmp_train_loss = np.array([])
             tmp_train_perplexity = np.array([])
+            iter_tmp_train_perplexity = np.array([])
             count = 0
+            iter_num = len(train_dataloader)
 
             
             for x, y in tqdm(train_dataloader):
@@ -255,13 +259,14 @@ class LanguageModelTrainer(BaseTrainer):
                 # train perplexity
                 train_perplexity = np.exp(train_loss)
                 tmp_train_perplexity = np.append(tmp_train_perplexity, train_perplexity)
+                iter_tmp_train_perplexity = np.append(iter_tmp_train_perplexity, train_perplexity)
                 
-                if count % 20 == 0:
-                    iter_train_perplexity = np.sum(tmp_train_perplexity) / 20
-                    tmp_train_perplexity = np.array([])
+                if count % iter_num == 0:
+                    iter_train_perplexity = np.sum(iter_tmp_train_perplexity) / iter_num
+                    iter_tmp_train_perplexity = np.array([])
                     self.train_perplexity_list_iter = np.append(self.train_perplexity_list_iter, iter_train_perplexity)
 
-                print(f"train loss : {train_loss}    train perplexity : {train_perplexity}\r", end="")
+                print(f"train loss : {train_loss}    train perplexity : {train_perplexity}    iter : {count}/{iter_num}\r", end="")
 
                 self._backward()
                 if max_grad is not None:
@@ -283,12 +288,16 @@ class LanguageModelTrainer(BaseTrainer):
             if valid_dataloader is not None:
                 self._validate(valid_dataloader, epoch)
             else:
-                print("--------------------------------")    
+                print("--------------------------------")
+                print()
 
 
-    def _validate(self, valid_dataloader, epoch):
+    def _validate(self, valid_dataloader, epoch, iter_num = 20):
+        self.model.valid_state()
+        self.model.reset_rnn_state()
         tmp_valid_loss = np.array([])
         tmp_valid_perplexity = np.array([])
+        iter_tmp_valid_perplexity = np.array([])
         count = 0
         for x, y in tqdm(valid_dataloader):
             count +=1
@@ -298,25 +307,26 @@ class LanguageModelTrainer(BaseTrainer):
             # valid perplexity
             valid_perplexity = np.exp(valid_loss)
             tmp_valid_perplexity = np.append(tmp_valid_perplexity, valid_perplexity)
+            iter_tmp_valid_perplexity = np.append(iter_tmp_valid_perplexity, valid_perplexity)
             
-            if count % 20 == 0:
-                iter_valid_perplexity = np.sum(tmp_valid_perplexity) / 20
-                tmp_valid_perplexity = np.array([])
+            if count % iter_num == 0:
+                iter_valid_perplexity = np.sum(iter_tmp_valid_perplexity) / iter_num
+                iter_tmp_valid_perplexity = np.array([])
                 self.valid_perplexity_list_iter = np.append(self.valid_perplexity_list_iter, iter_valid_perplexity)
-            
             
             print(f"valid loss : {valid_loss}    valid perplexity : {valid_perplexity}\r", end="")
             
         epoch_valid_loss = np.sum(tmp_valid_loss) / count
         self.valid_loss_list = np.append(self.valid_loss_list, epoch_valid_loss)
         
-        
         epoch_valid_perplexity = np.sum(tmp_valid_perplexity) / count
         self.valid_perplexity_list = np.append(self.valid_perplexity_list, epoch_valid_perplexity)
+        self.model.reset_rnn_state()
         
         print()
         print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss}    valid perplexity : {epoch_valid_perplexity}")
-        print("--------------------------------")    
+        print("--------------------------------")
+        print()
 
 
     def clip_grad(self, max_norm):

@@ -27,7 +27,8 @@ class SGDOptimizer(BaseOptimizer):
             layer = model.network[layer_name]
 
             # only update differentiable layer
-            if layer.differentiable:
+            # do not update tied layer
+            if layer.differentiable == True and layer.tied == False:
                 grad = layer.get_gradient()
                 param_list = list(layer.parameter.keys())
                 
@@ -49,7 +50,7 @@ class MomentumOptimizer(BaseOptimizer):
             self.v = OrderedDict()
             for layer_name in model.sequence:
                 layer = model.network[layer_name]
-                if layer.differentiable:
+                if layer.differentiable == True and layer.tied == False:
                     param_list = list(layer.parameter.keys())
                     self.v[layer_name] = OrderedDict()
 
@@ -61,7 +62,8 @@ class MomentumOptimizer(BaseOptimizer):
             layer = model.network[layer_name]
 
             # only update differentiable layer
-            if layer.differentiable:
+            # do not update tied layer
+            if layer.differentiable == True and layer.tied == False:
                 param_list = list(layer.parameter.keys())
                 grad = layer.get_gradient()
 
@@ -82,7 +84,7 @@ class AdaGrad(BaseOptimizer):
             self.h = OrderedDict()
             for layer_name in model.sequence:
                 layer = model.network[layer_name]
-                if layer.differentiable:
+                if layer.differentiable == True and layer.tied == False:
                     self.h[layer_name] = OrderedDict()
                     param_list = list(layer.parameter.keys())
     
@@ -93,9 +95,10 @@ class AdaGrad(BaseOptimizer):
         # update parameter
         for layer_name in model.sequence:
             layer = model.network[layer_name]
-
+            
             # only update differentiable layer
-            if layer.differentiable:
+            # do not update tied layer
+            if layer.differentiable == True and layer.tied == False:
                 grad = layer.get_gradient()
                 param_list = list(layer.parameter.keys())
 
@@ -124,7 +127,7 @@ class Adam(BaseOptimizer):
             self.m, self.v = OrderedDict(), OrderedDict()
             for layer_name in model.sequence:
                 layer = model.network[layer_name]
-                if layer.differentiable:
+                if layer.differentiable == True and layer.tied == False:
                     self.m[layer_name], self.v[layer_name] = OrderedDict(), OrderedDict()
                     param_list = list(layer.parameter.keys())
 
@@ -138,7 +141,8 @@ class Adam(BaseOptimizer):
             layer = model.network[layer_name]
 
             # only update differentiable layer
-            if layer.differentiable:
+            # do not update tied layer
+            if layer.differentiable == True and layer.tied == False:
                 
                 grad = layer.get_gradient()
                 param_list = list(layer.parameter.keys())
