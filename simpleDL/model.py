@@ -2,6 +2,7 @@ import numpy as np
 from collections import OrderedDict
 from simpleDL.function import *
 from copy import deepcopy
+from simpleDL.gpu import *    
 
 
 class BackBone:
@@ -41,16 +42,16 @@ class DenseLayer():
         self.parameter = OrderedDict()
 
         if initialize == "He":
-            self.parameter["weight"] = np.random.randn(input_size, output_size) * (np.sqrt(2 / input_size))
-            self.parameter["bias"] = np.zeros(output_size)    
+            self.parameter["weight"] = np.random.randn(input_size, output_size).astype(np.float32) * (np.sqrt(2 / input_size))
+            self.parameter["bias"] = np.zeros(output_size).astype(np.float32)    
 
         elif initialize == "Xavier":
-            self.parameter["weight"] = np.random.randn(input_size, output_size) * np.sqrt(1/input_size)
-            self.parameter["bias"] = np.zeros(output_size)
+            self.parameter["weight"] = np.random.randn(input_size, output_size).astype(np.float32) * np.sqrt(1/input_size)
+            self.parameter["bias"] = np.zeros(output_size).astype(np.float32)
 
         elif initialize == "None":
-            self.parameter["weight"] = 0.01 * np.random.randn(input_size, output_size)
-            self.parameter["bias"] = np.zeros(output_size)
+            self.parameter["weight"] = 0.01 * np.random.randn(input_size, output_size).astype(np.float32)
+            self.parameter["bias"] = np.zeros(output_size).astype(np.float32)
 
         else:
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
@@ -142,6 +143,7 @@ class DenseLayer():
         return grad
 
 
+
 class Embedding():
     def __init__(self, parameter):
         """
@@ -195,7 +197,11 @@ class Embedding():
         """
         dw = self.dw
         dw[...] = 0
-        np.add.at(dw, self.index, input)
+        if GPU:
+            import cupyx
+            cupyx.scatter_add(dw, self.index, input)
+        else:
+            np.add.at(dw, self.index, input)
 
         return None
 
@@ -243,7 +249,7 @@ class EmbeddingLayer():
     def _forward(self, x):
         batch_size, n_timestep = x.shape
 
-        result = np.empty((batch_size, n_timestep, self.hidden_size)).astype(np.float32)
+        result = np.empty((batch_size, n_timestep, self.hidden_size), dtype="f")
         self.layer = []
         
         for timestep in range(n_timestep):
@@ -379,8 +385,8 @@ class ConvLayer():
 
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dw"] = deepcopy(self.dw)
-        grad["db"] = deepcopy(self.db)
+        grad["dw"] = self.dw
+        grad["db"] = self.db
 
         return grad
 
@@ -614,7 +620,7 @@ class RNNLayer():
         batch_size, n_timestep, input_dim = x.shape
         input_dim, hidden_size = wx.shape
         
-        hidden_state = np.empty((batch_size, n_timestep, hidden_size)).astype(np.float32)
+        hidden_state = np.empty((batch_size, n_timestep, hidden_size) ,dtype="f")
         self.layer = []
 
         if not self.stateful or self.h is None:
@@ -635,7 +641,7 @@ class RNNLayer():
         batch_size, n_timestep, hidden_size  = dh.shape
         input_dim, hidden_size = wx.shape
         
-        dx = np.empty((batch_size, n_timestep, input_dim)).astype(np.float32)
+        dx = np.empty((batch_size, n_timestep, input_dim) ,dtype="f")
         
         dwx = np.zeros_like(wx).astype(np.float32)
         dwh = np.zeros_like(wh).astype(np.float32)
@@ -754,10 +760,10 @@ class LSTMCell():
     
 
     def _get_gradient(self):
-        dx = deepcopy(self.dx)
-        dwx = deepcopy(self.dwx)
-        dwh = deepcopy(self.dwh)
-        db = deepcopy(self.db)
+        dx = self.dx
+        dwx = self.dwx
+        dwh = self.dwh
+        db = self.db
 
         return dx, dwx, dwh, db
     
@@ -811,7 +817,7 @@ class LSTMLayer():
         hidden_size = wh.shape[0]
         
         self.layer = []
-        hidden_state = np.empty((batch_size, n_timestep, hidden_size)).astype(np.float32)
+        hidden_state = np.empty((batch_size, n_timestep, hidden_size), dtype="f")
         
         if not self.stateful or self.h is None:
             self.h = np.zeros((batch_size, hidden_size)).astype(np.float32)
@@ -833,7 +839,7 @@ class LSTMLayer():
         batch_size, n_timestep, hidden_size = dh.shape
         input_dim = wx.shape[0]
         
-        dx = np.empty((batch_size, n_timestep, input_dim)).astype(np.float32)
+        dx = np.empty((batch_size, n_timestep, input_dim), dtype="f")
         dh_t, dc_t = 0, 0
         
         dwx = np.zeros_like(wx).astype(np.float32)
@@ -850,18 +856,18 @@ class LSTMLayer():
             dwh += temp_dwh
             db += temp_db
         
-        self.dwx = deepcopy(dwx)
-        self.dwh = deepcopy(dwh)
-        self.db = deepcopy(db)
+        self.dwx = dwx
+        self.dwh = dwh
+        self.db = db
         self.dh = dh_t
         
         return dx
     
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dwx"] = deepcopy(self.dwx)
-        grad["dwh"] = deepcopy(self.dwh)
-        grad["db"] = deepcopy(self.db)
+        grad["dwx"] = self.dwx
+        grad["dwh"] = self.dwh
+        grad["db"] = self.db
 
         return grad
     
@@ -873,6 +879,33 @@ class LSTMLayer():
     def reset_state(self):
         self.h, self.c = None, None   
     
+
+class Dropout:
+    def __init__(self, dropout_ratio=0.5):
+        self.differentiable = False
+        self.dropout_ratio = dropout_ratio
+        self.mask = None
+        
+        
+    def __repr__(self):
+        return "Dropout"
+
+
+    def __call__(self, *args):
+        result = self._forward(*args)
+        return result
+    
+    
+    def forward(self, x, train_flg=True):
+        if train_flg:
+            self.mask = np.random.rand(*x.shape) > self.dropout_ratio
+            return x * self.mask
+        else:
+            return x * (1.0 - self.dropout_ratio)
+
+
+    def backward(self, dout):
+        return dout * self.mask
 
 
 class BatchNorm():
@@ -918,7 +951,7 @@ class Model(BackBone):
 
             
     def __call__(self, arg):
-        result = self._forward(arg)
+        result = self.forward(arg)
         return result
 
     
@@ -948,9 +981,8 @@ class Model(BackBone):
         structure = structure.join(string_list)
         return structure
             
-
-
-    def _forward(self, x):
+            
+    def forward(self, x):
         input = x
         for layer_name in self.sequence:
             layer = self.network[layer_name]
@@ -960,14 +992,14 @@ class Model(BackBone):
         return input
         
     
-    def _backward(self, loss):
+    def backward(self, loss):
         result = loss._backward()
         for layer_name in reversed(self.sequence):
             layer = self.network[layer_name]
             result = layer._backward(result)
 
     
-    def _update(self, lr= 0.01):
+    def update(self, lr= 0.01):
         for layer_name in self.sequence:
             layer = self.network[layer_name]
             if layer.differentiable:
@@ -975,15 +1007,14 @@ class Model(BackBone):
                 self.network[layer_name].parameter["bias"] -= (lr * layer.db)
 
 
-    def gradient(self):
-        count = 1
+    def get_gradient(self):
+        grad = OrderedDict()
         for layer_name in self.sequence:
             layer = self.network[layer_name]
             if layer.differentiable:
-                self.grad[f"w{count}"] = layer.dw
-                self.grad[f"b{count}"] = layer.db
-
-        return self.grad
+                grad[layer_name] = layer.get_gradient()
+                
+        return grad
                 
 
     def add_layer(self, layer):

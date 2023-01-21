@@ -1,4 +1,4 @@
-import numpy as np
+from simpleDL.gpu import *
 import matplotlib.pyplot as plt
 from PIL import Image
 

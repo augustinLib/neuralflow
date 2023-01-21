@@ -1,4 +1,4 @@
-import numpy as np
+from simpleDL.gpu import *
 from collections import OrderedDict
 
 
@@ -12,7 +12,7 @@ class BaseOptimizer():
         self.param_grad_dict["bias"] = "db"
         
         
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "Optimizer"
 
 

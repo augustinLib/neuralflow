@@ -1,14 +1,8 @@
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
 from collections import OrderedDict
-from simpleDL.gpu import set_device
-
-config = set_device("cpu")
-
-if config == "cpu":
-    import numpy as np
-else:
-    import cupy as np
+from simpleDL.gpu import *
+from simpleDL.utils import *
 
 
 class BaseTrainer():
@@ -225,7 +219,7 @@ class LanguageModelTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, valid_dataloader = None):
+    def train(self, train_dataloader, max_grad = None, valid_dataloader = None):
         """
         Train model with train/valid data
 
@@ -251,6 +245,8 @@ class LanguageModelTrainer(BaseTrainer):
                 print(f"train loss : {train_loss}    train perplexity : {train_perplexity}\r", end="")
 
                 self._backward()
+                if max_grad is not None:
+                    self.clip_grad(max_grad)
                 self._update()
             
             epoch_train_loss = np.sum(tmp_train_loss) / count
@@ -289,17 +285,47 @@ class LanguageModelTrainer(BaseTrainer):
         print("--------------------------------")    
 
 
+    def clip_grad(self, max_norm):
+        total_norm = 0
+        param_grad_dict = self.optimizer.param_grad_dict
+        
+        for layer_name in self.model.sequence:
+            layer = self.model.network[layer_name]
+            
+            # only update differentiable layer
+            if layer.differentiable:
+                grad = layer.get_gradient()
+                param_list = list(layer.parameter.keys())
+                for param in param_list:
+                    total_norm += np.sum(grad[param_grad_dict[param]] ** 2)
+                
+        total_norm = np.sqrt(total_norm)
+        rate = max_norm / (total_norm + 1e-6)
+        
+        if rate < 1:
+            for layer_name in self.model.sequence:
+                layer = self.model.network[layer_name]
+
+                # only update differentiable layer
+                if layer.differentiable:
+                    grad = layer.get_gradient()
+                    param_list = list(layer.parameter.keys())
+                    for param in param_list:
+                        grad[param_grad_dict[param]] *= rate
+                
+
+
     def show_error_graph(self, valid = False):
         """
         Visualize training/validation error
         """
         if valid:
-            plt.plot(self.valid_loss_list, "-b" ,label = 'valid error')
+            plt.plot(to_cpu(self.valid_loss_list), "-b" ,label = 'valid error')
             plt.title("train/valid loss per epoch")
         else:
             plt.title("train loss per epoch")
             
-        plt.plot(self.train_loss_list, "-r" ,label = 'train error')
+        plt.plot(to_cpu(self.train_loss_list), "-r" ,label = 'train error')
 
         plt.legend(loc="upper right")
 
@@ -312,12 +338,12 @@ class LanguageModelTrainer(BaseTrainer):
         Visualize training/validation perplexity
         """
         if valid:
-            plt.plot(self.valid_loss_list, "-b" ,label = 'valid perplexity')
+            plt.plot(to_cpu(self.valid_perplexity_list), "-b" ,label = 'valid perplexity')
             plt.title("train/valid perplexity per epoch")
         else:
             plt.title("train perplexity per epoch")
             
-        plt.plot(self.train_loss_list, "-r" ,label = 'train perplexity')
+        plt.plot(to_cpu(self.train_perplexity_list), "-r" ,label = 'train perplexity')
 
         plt.legend(loc="upper right")
 
