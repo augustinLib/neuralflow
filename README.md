@@ -59,6 +59,16 @@ trainer = ClassificationTrainer(model,
                                 init_lr = 0.001)
 trainer.train(dataloader)
 ```
+when using gpu, set it as follows.
+```python
+# using gpu
+from neuralflow import config
+config.GPU = True
+
+# using cpu
+from neuralflow import config
+config.GPU = False
+```
 
 ## Structure
 - neuralflow
