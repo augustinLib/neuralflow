@@ -9,6 +9,10 @@ $ git clone git clone https://github.com/augustinLib/neuralflow.git
 ```
 or
 ```
+# cpu-only
+$ pip install neuralflow-cpu
+
+# gpu (cuda 11.x)
 $ pip install neuralflow
 ```
 
