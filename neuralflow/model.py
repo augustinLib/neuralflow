@@ -6,7 +6,7 @@ from neuralflow.gpu import *
 from neuralflow.utils import *
 
 
-class BackBone:
+class BaseModel:
     def __init__(self):
         self.network = OrderedDict()
 
@@ -18,9 +18,32 @@ class BackBone:
     
     def _forward():
         pass
+    
 
+class BaseLayer():
+    def __init__(self):
+        self.differentiable = False
+        self.changeability = False
+        self.tying = False
+        self.tied = False
+        self.parameter = OrderedDict()
 
-class DenseLayer():
+    def _to_gpu(self):
+        pass
+    
+    def _to_cpu(self):
+        pass
+    
+    
+    def _save_params(self):
+        return deepcopy(self.parameter)
+    
+    
+    def _load_params(self, params):
+        self.parameter = deepcopy(params)
+    
+
+class DenseLayer(BaseLayer):
     def __init__(self, input_size: int, output_size: int, initialize: str = "He"):
         """
         Initialize DenseLayer
@@ -34,16 +57,13 @@ class DenseLayer():
         initialize (str, optional) : 가중치 초기화 방법 설정. Default: "He"
 
         """
+        super().__init__()
         self.input_size = input_size
         self.output_size = output_size
-        self.changeability = False
         self.differentiable = True
-        self.tying = False
-        self.tied = False
         self.x = None
         # for 4-dim tensor
         self.orgin_x_shape = None
-        self.parameter = OrderedDict()
 
         if initialize == "He":
             self.parameter["weight"] = np.random.randn(input_size, output_size).astype(np.float32) * (np.sqrt(2 / input_size))
@@ -152,8 +172,7 @@ class DenseLayer():
         return grad
 
 
-
-class Embedding():
+class Embedding(BaseLayer):
     def __init__(self, parameter):
         """
         Initialize EmbeddingLayer
@@ -167,10 +186,9 @@ class Embedding():
         initialize (str, optional) : 가중치 초기화 방법 설정. Default: "He"
 
         """
+        super().__init__()
         self.differentiable = True
-        self.changeability = False
         self.index = None
-        self.parameter = OrderedDict()
         self.parameter["weight"] = parameter["weight"]
         self.dw = np.zeros_like(self.parameter["weight"])
 
@@ -222,14 +240,12 @@ class Embedding():
         return dw
 
 
-class EmbeddingLayer():
+class EmbeddingLayer(BaseLayer):
     def __init__(self, vocab_size: int, hidden_size: int, initialize = "He"):
+        super().__init__()
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
-        self.changeability = False
-        self.tied = False
         self.differentiable = True
-        self.parameter = OrderedDict()
 
         if initialize == "He":
             self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
@@ -293,7 +309,7 @@ class EmbeddingLayer():
         return grad
 
 
-class ConvLayer():
+class ConvLayer(BaseLayer):
     """
     Convolution layer
     """
@@ -317,10 +333,8 @@ class ConvLayer():
 
 
         """
+        super().__init__()
         self.differentiable = True
-        self.tied = False
-        self.changeability = False
-        self.parameter = OrderedDict()
         self.input_channel = input_channel
         self.output_channel = output_channel
 
@@ -358,7 +372,7 @@ class ConvLayer():
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
 
 
-    def __repr__(self) -> str:
+    def __repr__(self) :
         return "ConvLayer"
 
 
@@ -439,11 +453,9 @@ class ConvLayer():
         return img[:, :, self.padding:input_height + self.padding, self.padding:input_width + self.padding]
 
 
-class MaxPoolingLayer():
+class MaxPoolingLayer(BaseLayer):
     def __init__(self, kernel_size, stride = 1, padding = 0):
-        self.differentiable = False
-        self.tied = False
-        self.changeability = False
+        super().__init__()
         
         if isinstance(kernel_size, int):
             self.kernel_width = kernel_size
@@ -458,7 +470,7 @@ class MaxPoolingLayer():
         self.x = None
         self.mask = None
 
-    def __repr__(self) -> str:
+    def __repr__(self):
         return "MaxPoolingLayer"
 
 
@@ -531,11 +543,10 @@ class MaxPoolingLayer():
         return img[:, :, self.padding:input_height + self.padding, self.padding:input_width + self.padding]
 
 
-class RNNCell():
+class RNNCell(BaseLayer):
     def __init__(self, parameter):
-        self.parameter = OrderedDict()
-        self.differentiable = True
-        self.changeability = False    
+        super().__init__()
+        self.differentiable = True  
         self.parameter["weight_x"] = parameter["weight_x"]
         self.parameter["weight_h"] = parameter["weight_h"]
         self.parameter["bias"] = parameter["bias"] 
@@ -591,12 +602,10 @@ class RNNCell():
         return dx, dwx, dwh, db
 
 
-class RNNLayer():
+class RNNLayer(BaseLayer):
     def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
+        super().__init__()
         self.differentiable = True
-        self.tied = False
-        self.changeability = False
-        self.parameter = OrderedDict()
         self.input_size = input_size
         self.hidden_size = hidden_size
 
@@ -705,11 +714,10 @@ class RNNLayer():
         self.h = None
         
         
-class LSTMCell():
+class LSTMCell(BaseLayer):
     def __init__(self, parameter):
+        super().__init__()
         self.differentiable = True
-        self.changeability = False
-        self.parameter = OrderedDict()
         self.parameter["weight_x"] = parameter["weight_x"]
         self.parameter["weight_h"] = parameter["weight_h"]
         self.parameter["bias"] = parameter["bias"]
@@ -789,12 +797,10 @@ class LSTMCell():
         return dx, dwx, dwh, db
     
     
-class LSTMLayer():
+class LSTMLayer(BaseLayer):
     def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
+        super().__init__()
         self.differentiable = True
-        self.tied = False
-        self.changeability = False
-        self.parameter = OrderedDict()
         self.input_size = input_size
         self.hidden_size = hidden_size
 
@@ -903,10 +909,9 @@ class LSTMLayer():
         self.h, self.c = None, None   
     
 
-class Dropout():
+class Dropout(BaseLayer):
     def __init__(self, dropout_ratio=0.5):
-        self.differentiable = False
-        self.tied = False
+        super().__init__()
         self.changeability = True
         self.dropout_ratio = dropout_ratio
         self.train_flg=True
@@ -942,25 +947,7 @@ class Dropout():
         self.train_flg = False
 
 
-class BatchNorm():
-    def __init__(self, epsilon = 1e-8):
-        self.differentiable = True
-        self.mean = None
-        self.std = None
-        self.parameter = OrderedDict()
-
-
-    def _forward(self, x):
-        self.x = x
-        result = np.matmul(x, self.parameter["weight"]) + self.parameter["bias"]
-        return result
-
-
-    def __repr__(self):
-        return "BatchNormLayer"
-
-
-class Model(BackBone):
+class Model(BaseModel):
     def __init__(self, *layers):
         super().__init__()
         self.sequence = []
@@ -1105,7 +1092,28 @@ class Model(BackBone):
 
         with open(file_name, 'wb') as f:
             pickle.dump(params, f)
+            
     
+    def save_params(self, fn = None):
+        model_param = OrderedDict()
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.differentiable:
+                param = layer._save_params()
+                model_param[layer_name] = param
+                
+        if fn is None:
+            fn = self.__class__.__name__ + '.pkl'
+            
+        with open(fn, 'wb') as f:
+            pickle.dump(model_param, f)
+            
     
     def load_params(self, fn = None):
-        pass
+        with open(fn, 'rb') as f:
+            model_param = deepcopy(pickle.load(f))
+            
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.differentiable:
+                layer._load_params(model_param[layer_name])
