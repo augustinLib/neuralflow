@@ -12,11 +12,11 @@ class BaseModel:
 
 
     def __call__(self, arg):
-        result = self._forward(arg)
+        result = self.forward(arg)
         return result
 
     
-    def _forward():
+    def forward():
         pass
     
 
@@ -28,11 +28,17 @@ class BaseLayer():
         self.tied = False
         self.parameter = OrderedDict()
 
-    def _to_gpu(self):
-        pass
     
     def _to_cpu(self):
-        pass
+        param_list = list(self.parameter.keys())
+        for param in param_list:
+            self.parameter[param] = to_cpu(self.parameter[param])
+            
+    
+    def _to_gpu(self):
+        param_list = list(self.parameter.keys())
+        for param in param_list:
+            self.parameter[param] = to_gpu(self.parameter[param])
     
     
     def _save_params(self):
@@ -1081,17 +1087,19 @@ class Model(BaseModel):
         emb_layer.parameter["weight"] = final_dense_layer.parameter["weight"].T
         final_dense_layer.emb_dw = emb_layer.dw
         
-
-    def save_model(self, fn = None):
-        if file_name is None:
-            file_name = self.__class__.__name__ + '.pkl'
-            
-        params = [p.astype(np.float16) for p in self.network]
-        if GPU:
-            params = [to_cpu(p) for p in params]
-
-        with open(file_name, 'wb') as f:
-            pickle.dump(params, f)
+    
+    def to_cpu(self):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.differentiable:
+                layer._to_cpu()
+ 
+    
+    def to_gpu(self):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            if layer.differentiable:
+                layer._to_gpu()
             
     
     def save_params(self, fn = None):
