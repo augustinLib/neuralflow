@@ -132,7 +132,6 @@ class SpaceTokenizer(BaseTokenizer):
         return self.id_to_word
 
 
-
 def cosine_similarity(x, y, eps=1e-8):
     nx = x / (np.sqrt(np.sum(x**2)) + eps)
     ny = y / (np.sqrt(np.sum(y**2)) + eps)
