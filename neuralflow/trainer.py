@@ -230,7 +230,7 @@ class LanguageModelTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, valid_dataloader = None, max_grad = None, iter_num = 20):
+    def train(self, train_dataloader, valid_dataloader = None, max_grad = None, show_iter_num = 20):
         """
         Train model with train/valid data
 
@@ -241,8 +241,9 @@ class LanguageModelTrainer(BaseTrainer):
         valid_dataloader (iterable) : Valid dataloader that can iterate with batch size in valid dataset
 
         """
-        self.model.train_state()
+        
         for epoch in range(self.n_epochs):
+            self.model.train_state()
             print(f"epoch {epoch+1}")
             tmp_train_loss = np.array([])
             tmp_train_perplexity = np.array([])
@@ -261,12 +262,12 @@ class LanguageModelTrainer(BaseTrainer):
                 tmp_train_perplexity = np.append(tmp_train_perplexity, train_perplexity)
                 iter_tmp_train_perplexity = np.append(iter_tmp_train_perplexity, train_perplexity)
                 
-                if count % iter_num == 0:
-                    iter_train_perplexity = np.sum(iter_tmp_train_perplexity) / iter_num
+                if count % show_iter_num == 0:
+                    iter_train_perplexity = np.sum(iter_tmp_train_perplexity) / show_iter_num
                     iter_tmp_train_perplexity = np.array([])
                     self.train_perplexity_list_iter = np.append(self.train_perplexity_list_iter, iter_train_perplexity)
 
-                print(f"train loss : {train_loss}    train perplexity : {train_perplexity}    iter : {count}/{iter_num}\r", end="")
+                print(f"train loss : {train_loss:.6f}    train perplexity : {train_perplexity:.6f}    iter : {count}/{iter_num}\r", end="")
 
                 self._backward()
                 if max_grad is not None:
@@ -282,7 +283,7 @@ class LanguageModelTrainer(BaseTrainer):
             self.train_perplexity_list = np.append(self.train_perplexity_list, epoch_train_perplexity)
             
             print()
-            print(f"epoch {epoch+1} -- train loss : {epoch_train_loss}    train perplexity : {epoch_train_perplexity}")
+            print(f"epoch {epoch+1} -- train loss : {epoch_train_loss:.6f}    train perplexity : {epoch_train_perplexity:.6f}")
             
             
             if valid_dataloader is not None:
@@ -292,7 +293,7 @@ class LanguageModelTrainer(BaseTrainer):
                 print()
 
 
-    def _validate(self, valid_dataloader, epoch, iter_num = 20):
+    def _validate(self, valid_dataloader, epoch, show_iter_num = 20):
         self.model.valid_state()
         self.model.reset_rnn_state()
         tmp_valid_loss = np.array([])
@@ -309,12 +310,12 @@ class LanguageModelTrainer(BaseTrainer):
             tmp_valid_perplexity = np.append(tmp_valid_perplexity, valid_perplexity)
             iter_tmp_valid_perplexity = np.append(iter_tmp_valid_perplexity, valid_perplexity)
             
-            if count % iter_num == 0:
-                iter_valid_perplexity = np.sum(iter_tmp_valid_perplexity) / iter_num
+            if count % show_iter_num == 0:
+                iter_valid_perplexity = np.sum(iter_tmp_valid_perplexity) / show_iter_num
                 iter_tmp_valid_perplexity = np.array([])
                 self.valid_perplexity_list_iter = np.append(self.valid_perplexity_list_iter, iter_valid_perplexity)
             
-            print(f"valid loss : {valid_loss}    valid perplexity : {valid_perplexity}\r", end="")
+            print(f"valid loss : {valid_loss:.6f}    valid perplexity : {valid_perplexity:.6f}\r", end="")
             
         epoch_valid_loss = np.sum(tmp_valid_loss) / count
         self.valid_loss_list = np.append(self.valid_loss_list, epoch_valid_loss)
@@ -324,7 +325,7 @@ class LanguageModelTrainer(BaseTrainer):
         self.model.reset_rnn_state()
         
         print()
-        print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss}    valid perplexity : {epoch_valid_perplexity}")
+        print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss:.6f}    valid perplexity : {epoch_valid_perplexity:.6f}")
         print("--------------------------------")
         print()
 
@@ -410,7 +411,26 @@ class LanguageModelTrainer(BaseTrainer):
             plt.show()
 
 
+    def eval_perplexity(self, test_dataloader):
+        print('Test perplexity ...')
+        self.model.valid_state()
+        self.model.reset_rnn_state()
+        
+        tmp_test_loss = np.array([])
+        tmp_test_perplexity = np.array([])
 
-    def add_metric(self, **metric):
-        print(f"metic {metric.keys()} added")
-        self.metric = dict(self.metric, metric)
+        count = 0
+        for x, y in tqdm(test_dataloader):
+            count +=1
+            # test loss
+            test_loss = self._forward(x, y)
+            tmp_test_loss = np.append(tmp_test_loss, test_loss)
+            # test perplexity
+            test_perplexity = np.exp(test_loss)
+            tmp_test_perplexity = np.append(tmp_test_perplexity, test_perplexity)
+            
+        epoch_test_loss = np.sum(tmp_test_loss) / count
+        epoch_test_perplexity = np.sum(tmp_test_perplexity) / count
+
+        print()
+        print(f"test loss : {epoch_test_loss:.6f}    test perplexity : {epoch_test_perplexity:.6f}")
