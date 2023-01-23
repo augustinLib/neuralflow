@@ -734,8 +734,8 @@ class LSTMCell(BaseLayer):
         self.db = None
         
         
-    def __call__(self, *arg):
-        result = self._forward(*arg)
+    def __call__(self, *args):
+        result = self._forward(*args)
         return result
         
         
@@ -829,7 +829,7 @@ class LSTMLayer(BaseLayer):
         self.c = None
         self.dh = None
         self.layer = None
-        self.stateful = "stateful"
+        self.stateful = True
         self.dx = None
         self.dwx = None
         self.dwh = None
@@ -958,6 +958,7 @@ class Model(BaseModel):
         super().__init__()
         self.sequence = []
         self.grad = OrderedDict()
+        
         self.layers = layers
 
         self.count_dict = OrderedDict()
@@ -1048,6 +1049,7 @@ class Model(BaseModel):
         if repr(layer) not in self.count_dict.keys():
             self.count_dict[repr(layer)] = 1
             
+        self.layers += (layer,)
         self.network[f"{repr(layer)}{self.count_dict[repr(layer)]}"] = layer
         self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
         self.count_dict[repr(layer)] += 1
