@@ -3,7 +3,8 @@ from neuralflow.gpu import *
 
 class BaseFunction():
     def __init__(self):
-        pass
+        self.differentiable = False
+        self.changeability = False
 
     def __call__(self, arg):
         result = self._forward(arg)
@@ -34,9 +35,10 @@ class Identity(BaseFunction):
 
 class Sigmoid(BaseFunction):
     def __init__(self):
+        super().__init__()
         self.differentiable = False
         self.out = None
-        super().__init__()
+        
 
     def _forward(self, x):
         out = sigmoid(x)
@@ -47,6 +49,26 @@ class Sigmoid(BaseFunction):
 
     def _backward(self, input):
         result = input * self.out * (1.0-self.out)
+
+        return result
+    
+    
+class Tanh(BaseFunction):
+    def __init__(self):
+        super().__init__()
+        self.differentiable = False
+        self.out = None
+        
+
+    def _forward(self, x):
+        out = np.tanh(x)
+        self.out = out
+
+        return out
+
+
+    def _backward(self, input):
+        result = input * (1 - self.out ** 2)
 
         return result
 

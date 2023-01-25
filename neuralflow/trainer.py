@@ -1,7 +1,5 @@
-import sys
 from tqdm.notebook import tqdm
 import matplotlib.pyplot as plt
-import plotly.express as px
 from collections import OrderedDict
 from neuralflow.gpu import *
 from neuralflow.utils import *
@@ -23,7 +21,9 @@ class BaseTrainer():
         self.init_lr = init_lr
         self.metric = OrderedDict()
         self.train_loss_list = np.array([])
+        self.train_loss_list_iter = np.array([])
         self.valid_loss_list = np.array([])
+        self.valid_loss_list_iter = np.array([])
 
 
     def __repr__(self):
@@ -55,6 +55,7 @@ class ClassificationTrainer(BaseTrainer):
 
         self.train_accuracy_list = np.array([])
         self.valid_accuracy_list = np.array([])
+        
 
 
     def _forward(self, x, y):
@@ -72,7 +73,7 @@ class ClassificationTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, valid_dataloader = None):
+    def train(self, train_dataloader, valid_dataloader = None, show_iter_num=20):
         """
         Train model with train/valid data
 
@@ -84,8 +85,11 @@ class ClassificationTrainer(BaseTrainer):
 
         """
         for epoch in range(self.n_epochs):
+            self.model.train_state()
             print(f"epoch {epoch+1}")
             tmp_train_loss = np.array([])
+            iter_tmp_train_loss = np.array([])
+            count = 0
             train_correct_num = 0
             y_num = 0
             for x, y in tqdm(train_dataloader):
@@ -98,7 +102,15 @@ class ClassificationTrainer(BaseTrainer):
                 train_correct_num += np.sum(pred==y)
                 y_num += len(y)
 
-                print(f"train loss : {train_loss}    train accuarcy : {train_correct_num/y_num*100}\r", end="")
+                train_temp_accuracy = train_correct_num/y_num*100
+                iter_tmp_train_loss = np.append(iter_tmp_train_loss, train_loss)
+                
+                if count % show_iter_num == 0:
+                    iter_train_loss = np.sum(iter_tmp_train_loss) / show_iter_num
+                    iter_tmp_train_loss = np.array([])
+                    self.train_loss_list_iter = np.append(self.train_loss_list_iter, iter_train_loss)
+                
+                print(f"train loss : {train_loss:.6f}    train accuarcy : {train_temp_accuracy:.6f}\r", end="")
 
                 self._backward()
                 self._update()
@@ -106,6 +118,7 @@ class ClassificationTrainer(BaseTrainer):
                 
             epoch_train_loss = np.sum(tmp_train_loss) / train_dataloader.batch_size
             self.train_loss_list = np.append(self.train_loss_list, epoch_train_loss)
+            
             dataset_len = train_dataloader.dataset_len()
             epoch_train_accuracy = train_correct_num/float(dataset_len) * 100
             self.train_accuracy_list = np.append(self.train_accuracy_list, epoch_train_accuracy)
@@ -114,15 +127,19 @@ class ClassificationTrainer(BaseTrainer):
             
             
             if valid_dataloader is not None:
-                self._validate(valid_dataloader, epoch)
+                self._validate(valid_dataloader, epoch, show_iter_num=show_iter_num)
             else:
-                print("--------------------------------")    
+                print("----------------------------------------------------------------")    
 
 
 
 
-    def _validate(self, valid_dataloader, epoch):
+    def _validate(self, valid_dataloader, epoch, show_iter_num = 20):
+        self.model.valid_state()
+        self.model.reset_rnn_state()
         tmp_valid_loss = np.array([])
+        iter_tmp_valid_loss = np.array([])
+        count = 0
         valid_correct_num = 0
         y_num = 0
         for x, y in tqdm(valid_dataloader):
@@ -133,35 +150,59 @@ class ClassificationTrainer(BaseTrainer):
                 y = np.argmax(y, axis=1)
             valid_correct_num += np.sum(pred==y)
             y_num += len(y)
+            
+            valid_temp_accuracy = valid_correct_num/y_num*100
+            iter_tmp_valid_loss = np.append(iter_tmp_valid_loss, valid_loss)
+            
+            if count % show_iter_num == 0:
+                iter_valid_loss = np.sum(iter_tmp_valid_loss) / show_iter_num
+                iter_tmp_valid_loss = np.array([])
+                self.valid_loss_list_iter = np.append(self.valid_loss_list_iter, iter_valid_loss)
 
-            print(f"valid loss : {valid_loss}    valid accuarcy : {valid_correct_num/y_num*100}\r", end="")
+            print(f"valid loss : {valid_loss:.6f}    valid accuarcy : {valid_temp_accuracy:.6f}\r", end="")
 
         epoch_valid_loss = np.sum(tmp_valid_loss) / valid_dataloader.batch_size
         self.valid_loss_list = np.append(self.valid_loss_list, epoch_valid_loss)
         dataset_len = valid_dataloader.dataset_len()
         epoch_valid_accuracy = valid_correct_num/float(dataset_len) * 100
         self.valid_accuracy_list = np.append(self.valid_accuracy_list, epoch_valid_accuracy)
+        self.model.reset_rnn_state()
+        
         print()
         print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss}    valid accuarcy : {epoch_valid_accuracy}")
-        print("--------------------------------")    
+        print("----------------------------------------------------------------")    
 
         
-    def show_error_graph(self, valid = False):
+    def show_error_graph(self, show_iter = False, valid = False):
         """
         Visualize training/validation error
         """
-        if valid:
-            plt.plot(to_cpu(self.valid_loss_list), "-b" ,label = 'valid error')
-            plt.title("train/valid loss per epoch")
-        else:
-            plt.title("train loss per epoch")
+        if show_iter:
             
-        plt.plot(to_cpu(self.train_loss_list), "-r" ,label = 'train error')
+            if valid:
+                plt.plot(to_cpu(self.valid_loss_list_iter), "-b" ,label = 'valid loss')
+                plt.title("train/valid loss per iteration")
+            else:
+                plt.title("train loss per iteration")
 
-        plt.legend(loc="upper right")
+            plt.plot(to_cpu(self.train_loss_list_iter), "-r" ,label = 'train loss')
+            plt.legend(loc="upper right")
+            plt.grid()
+            plt.show()
 
-        plt.grid()
-        plt.show()
+        else:
+            if valid:
+                plt.plot(to_cpu(self.valid_loss_list), "-b" ,label = 'valid loss')
+                plt.title("train/valid loss per epoch")
+            else:
+                plt.title("train loss per epoch")
+
+            plt.plot(to_cpu(self.train_loss_list), "-r" ,label = 'train loss')
+
+            plt.legend(loc="upper right")
+
+            plt.grid()
+            plt.show()
 
 
     def show_accuracy_graph(self, valid = False):
@@ -246,8 +287,10 @@ class LanguageModelTrainer(BaseTrainer):
             self.model.train_state()
             print(f"epoch {epoch+1}")
             tmp_train_loss = np.array([])
+            iter_tmp_train_loss = np.array([])
             tmp_train_perplexity = np.array([])
             iter_tmp_train_perplexity = np.array([])
+
             count = 0
             iter_num = len(train_dataloader)
 
@@ -261,8 +304,13 @@ class LanguageModelTrainer(BaseTrainer):
                 train_perplexity = np.exp(train_loss)
                 tmp_train_perplexity = np.append(tmp_train_perplexity, train_perplexity)
                 iter_tmp_train_perplexity = np.append(iter_tmp_train_perplexity, train_perplexity)
+                iter_tmp_train_loss = np.append(iter_tmp_train_loss, train_loss)
                 
                 if count % show_iter_num == 0:
+                    iter_train_loss = np.sum(iter_tmp_train_loss) / show_iter_num
+                    iter_tmp_train_loss = np.array([])
+                    self.train_loss_list_iter = np.append(self.train_loss_list_iter, iter_train_loss)
+                    
                     iter_train_perplexity = np.sum(iter_tmp_train_perplexity) / show_iter_num
                     iter_tmp_train_perplexity = np.array([])
                     self.train_perplexity_list_iter = np.append(self.train_perplexity_list_iter, iter_train_perplexity)
@@ -287,9 +335,9 @@ class LanguageModelTrainer(BaseTrainer):
             
             
             if valid_dataloader is not None:
-                self._validate(valid_dataloader, epoch)
+                self._validate(valid_dataloader, epoch, show_iter_num=show_iter_num)
             else:
-                print("--------------------------------")
+                print("----------------------------------------------------------------")
                 print()
 
 
@@ -297,6 +345,7 @@ class LanguageModelTrainer(BaseTrainer):
         self.model.valid_state()
         self.model.reset_rnn_state()
         tmp_valid_loss = np.array([])
+        iter_tmp_valid_loss = np.array([])
         tmp_valid_perplexity = np.array([])
         iter_tmp_valid_perplexity = np.array([])
         count = 0
@@ -311,6 +360,10 @@ class LanguageModelTrainer(BaseTrainer):
             iter_tmp_valid_perplexity = np.append(iter_tmp_valid_perplexity, valid_perplexity)
             
             if count % show_iter_num == 0:
+                iter_valid_loss = np.sum(iter_tmp_valid_loss) / show_iter_num
+                iter_tmp_valid_loss = np.array([])
+                self.valid_loss_list_iter = np.append(self.valid_loss_list_iter, iter_valid_loss)
+                
                 iter_valid_perplexity = np.sum(iter_tmp_valid_perplexity) / show_iter_num
                 iter_tmp_valid_perplexity = np.array([])
                 self.valid_perplexity_list_iter = np.append(self.valid_perplexity_list_iter, iter_valid_perplexity)
@@ -326,7 +379,7 @@ class LanguageModelTrainer(BaseTrainer):
         
         print()
         print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss:.6f}    valid perplexity : {epoch_valid_perplexity:.6f}")
-        print("--------------------------------")
+        print("----------------------------------------------------------------")
         print()
 
 
@@ -360,30 +413,44 @@ class LanguageModelTrainer(BaseTrainer):
                 
 
 
-    def show_error_graph(self, valid = False):
+    def show_error_graph(self, show_iter = False, valid = False):
         """
         Visualize training/validation error
         """
-        if valid:
-            plt.plot(to_cpu(self.valid_loss_list), "-b" ,label = 'valid error')
-            plt.title("train/valid loss per epoch")
-        else:
-            plt.title("train loss per epoch")
+        if show_iter:
             
-        plt.plot(to_cpu(self.train_loss_list), "-r" ,label = 'train error')
+            if valid:
+                plt.plot(to_cpu(self.valid_loss_list_iter), "-b" ,label = 'valid loss')
+                plt.title("train/valid loss per iteration")
+            else:
+                plt.title("train loss per iteration")
 
-        plt.legend(loc="upper right")
+            plt.plot(to_cpu(self.train_loss_list_iter), "-r" ,label = 'train loss')
+            plt.legend(loc="upper right")
+            plt.grid()
+            plt.show()
 
-        plt.grid()
-        plt.show()
+        else:
+            if valid:
+                plt.plot(to_cpu(self.valid_loss_list), "-b" ,label = 'valid loss')
+                plt.title("train/valid loss per epoch")
+            else:
+                plt.title("train loss per epoch")
+
+            plt.plot(to_cpu(self.train_loss_list), "-r" ,label = 'train loss')
+
+            plt.legend(loc="upper right")
+
+            plt.grid()
+            plt.show()
 
 
     def show_perplexity_graph(self, show_iter = False, valid = False):
         """
         Visualize training/validation perplexity
         """
+        plt.ylim(-1, 401)
         if show_iter:
-            plt.ylim(-1, 501)
             
             if valid:
                 plt.plot(to_cpu(self.valid_perplexity_list_iter), "-b" ,label = 'valid perplexity')
