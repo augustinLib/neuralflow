@@ -85,7 +85,9 @@ config.GPU = False
     - trainer.py
     - utils.py
     - nlp
+      - \_\_init\_\_.py
       - utils.py
+      - model.py
     - epoch_notice
       - send_message.py
       - token_generator.py
