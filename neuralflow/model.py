@@ -915,6 +915,238 @@ class LSTMLayer(BaseLayer):
         self.h, self.c = None, None   
     
 
+class BatchNorm1D(BaseLayer):
+    def __init__(self, num_features, eps=1e-05, momentum=0.9):
+        super().__init__()
+        self.changeability = True
+        self.differentiable = True
+        self.train_flg=True
+        self.num_features = num_features
+
+        self.parameter["gamma"] = np.ones(num_features).astype(np.float32)
+        self.parameter["beta"] = np.zeros(num_features).astype(np.float32)
+
+        self.eps = eps
+        self.momentum = momentum
+        
+        self.input_reshaped = None
+        self.input_shape = None
+        self.mean = None
+        self.var = None
+        self.batch_size = None
+        self.xc = None
+        self.std = None
+        self.dgamma = None
+        self.dbeta = None
+        
+        
+    def __call__(self, *args):
+        result = self._forward(*args)
+        return result
+
+
+    def __repr__(self):
+        return "BatchNormLayer"
+    
+
+    def _forward(self, x):
+        self.input_shape = x.shape
+        if self.input_reshaped == None:
+            self._check_input(x)
+        
+        if x.ndim != 2:
+            batch_size, n_input_channel, input_length, = x.shape
+            x = x.reshape(batch_size, -1)
+
+        out = self.__forward(x)
+        
+        return out.reshape(*self.input_shape)
+            
+    def __forward(self, x):
+        if self.mean is None:
+            batch_size, input_dim = x.shape
+            self.mean = np.zeros(input_dim)
+            self.var = np.zeros(input_dim)
+                        
+        if self.train_flg:
+            mu = x.mean(axis=0)
+            xc = x - mu
+            var = np.mean(xc**2, axis=0)
+            std = np.sqrt(var + self.eps)
+            xn = xc / std
+            
+            self.batch_size = x.shape[0]
+            self.xc = xc
+            self.xn = xn
+            self.std = std
+            self.mean = self.momentum * self.mean + (1-self.momentum) * mu
+            self.var = self.momentum * self.var + (1-self.momentum) * var            
+        else:
+            xc = x - self.mean
+            xn = xc / ((np.sqrt(self.var + self.eps)))
+            
+        out = self.parameter["gamma"] * xn + self.parameter["beta"]
+        return out
+
+    def _backward(self, dout):
+        if dout.ndim != 2:
+            N, C, H, W = dout.shape
+            dout = dout.reshape(N, -1)
+
+        dx = self.__backward(dout)
+
+        dx = dx.reshape(*self.input_shape)
+        return dx
+
+    def __backward(self, dout):
+        dbeta = dout.sum(axis=0)
+        dgamma = np.sum(self.xn * dout, axis=0)
+        dxn = self.parameter["gamma"] * dout
+        dxc = dxn / self.std
+        dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+        dvar = 0.5 * dstd / self.std
+        dxc += (2.0 / self.batch_size) * self.xc * dvar
+        dmu = np.sum(dxc, axis=0)
+        dx = dxc - dmu / self.batch_size
+        
+        self.dgamma = dgamma
+        self.dbeta = dbeta
+        
+        return dx
+    
+    def _check_input(self, x):
+        if x.ndim != 2:
+            batch_size, n_input_channel, input_length = self.input_shape
+            self.parameter["gamma"] = np.ones(self.num_features*input_length).astype(np.float32)
+            self.parameter["beta"] = np.zeros(self.num_features*input_length).astype(np.float32)
+            self.input_reshaped = True
+        else:
+            self.input_reshaped = False
+        
+    
+    def get_gradient(self):
+        grad = OrderedDict()
+        grad["dgamma"] = self.dgamma
+        grad["dbeta"] = self.dbeta
+
+        return grad
+    
+    
+    
+class BatchNorm2D(BaseLayer):
+    def __init__(self, num_features, eps=1e-05, momentum=0.9):
+        super().__init__()
+        self.changeability = True
+        self.differentiable = True
+        self.train_flg=True
+        self.num_features = num_features
+
+        self.eps = eps
+        self.momentum = momentum
+        
+        self.input_reshaped = None
+        self.input_shape = None
+        self.mean = None
+        self.var = None
+        self.batch_size = None
+        self.xc = None
+        self.std = None
+        self.dgamma = None
+        self.dbeta = None
+        
+        
+    def __call__(self, args):
+        result = self._forward(args)
+        return result
+
+
+    def __repr__(self):
+        return "BatchNormLayer"
+    
+
+    def _forward(self, x):
+        self.input_shape = x.shape
+        # print(x.shape)
+        if self.input_reshaped == None:
+            self._initialize_param()
+
+        batch_size, n_input_channel, input_height, input_width = x.shape
+        x = x.reshape(batch_size, -1)
+
+        out = self.__forward(x)
+        
+        return out.reshape(*self.input_shape)
+            
+    def __forward(self, x):
+        if self.mean is None:
+            batch_size, input_dim = x.shape
+            self.mean = np.zeros(input_dim)
+            self.var = np.zeros(input_dim)
+                        
+        if self.train_flg:
+            mu = x.mean(axis=0)
+            xc = x - mu
+            var = np.mean(xc**2, axis=0)
+            std = np.sqrt(var + self.eps)
+            xn = xc / std
+            
+            self.batch_size = x.shape[0]
+            self.xc = xc
+            self.xn = xn
+            self.std = std
+            self.mean = self.momentum * self.mean + (1-self.momentum) * mu
+            self.var = self.momentum * self.var + (1-self.momentum) * var            
+        else:
+            xc = x - self.mean
+            xn = xc / ((np.sqrt(self.var + self.eps)))
+            
+        out = self.parameter["gamma"] * xn + self.parameter["beta"]
+        return out
+
+
+    def _backward(self, dout):
+ 
+        N, C, H, W = dout.shape
+        dout = dout.reshape(N, -1)
+
+        dx = self.__backward(dout)
+
+        dx = dx.reshape(*self.input_shape)
+        return dx
+
+
+    def __backward(self, dout):
+        dbeta = dout.sum(axis=0)
+        dgamma = np.sum(self.xn * dout, axis=0)
+        dxn = self.parameter["gamma"] * dout
+        dxc = dxn / self.std
+        dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+        dvar = 0.5 * dstd / self.std
+        dxc += (2.0 / self.batch_size) * self.xc * dvar
+        dmu = np.sum(dxc, axis=0)
+        dx = dxc - dmu / self.batch_size
+        
+        self.dgamma = dgamma
+        self.dbeta = dbeta
+        
+        return dx
+    
+    
+    def _initialize_param(self):
+        batch_size, n_input_channel, input_height, input_width = self.input_shape
+        self.parameter["gamma"] = np.ones(self.num_features*input_height*input_width).astype(np.float32)
+        self.parameter["beta"] = np.zeros(self.num_features*input_height*input_width).astype(np.float32)
+        self.input_reshaped = True
+    
+    
+    def get_gradient(self):
+        grad = OrderedDict()
+        grad["dgamma"] = self.dgamma
+        grad["dbeta"] = self.dbeta
+
+        return grad
+
+
 class Dropout(BaseLayer):
     def __init__(self, dropout_ratio=0.5):
         super().__init__()
@@ -933,13 +1165,22 @@ class Dropout(BaseLayer):
         return result
     
     
+    # def _forward(self, x):
+    #     if self.train_flg:
+    #         self.mask = np.random.rand(*x.shape) > self.dropout_ratio
+    #         return x * self.mask
+    #     else:
+    #         return x * (1.0 - self.dropout_ratio)
+
     def _forward(self, x):
         if self.train_flg:
-            self.mask = np.random.rand(*x.shape) > self.dropout_ratio
+            flg = np.random.rand(*x.shape) > self.dropout_ratio
+            scale = 1 / (1.0 - self.dropout_ratio)
+            self.mask = flg.astype(np.float32) * scale
+
             return x * self.mask
         else:
-            return x * (1.0 - self.dropout_ratio)
-
+            return x
 
     def _backward(self, dout):
         return dout * self.mask
@@ -1000,6 +1241,11 @@ class Model(BaseModel):
                     lstm_out /= 4
                     shape = (lstm_in, int(lstm_out))
                     string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
+                    
+                elif repr(layer) =="BatchNormLayer":
+                    shape = layer.num_features
+                    string_list.append(f"{i}. {layer_name} : {layer} ({shape}) \n")
+                    
                 else:
                     shape = layer.parameter["weight"].shape
                     string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")

@@ -10,6 +10,9 @@ class BaseOptimizer():
         self.param_grad_dict["weight_x"] = "dwx"
         self.param_grad_dict["weight_h"] = "dwh"
         self.param_grad_dict["bias"] = "db"
+        self.param_grad_dict["gamma"] = "dgamma"
+        self.param_grad_dict["beta"] = "dbeta"
+        
         
         
     def __repr__(self):
