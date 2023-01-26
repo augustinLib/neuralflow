@@ -295,5 +295,5 @@ test.py
 *.npy
 *.txt
 *.ipynb
-
+gate.py
 # End of https://www.toptal.com/developers/gitignore/api/python,jupyternotebooks,pycharm+all,visualstudiocode

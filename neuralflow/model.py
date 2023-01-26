@@ -8,6 +8,8 @@ from neuralflow.utils import *
 
 class BaseModel:
     def __init__(self):
+        """Base object for Model
+        """
         self.network = OrderedDict()
 
 
@@ -22,6 +24,8 @@ class BaseModel:
 
 class BaseLayer():
     def __init__(self):
+        """Base object for Layer
+        """
         self.differentiable = False
         self.changeability = False
         self.tying = False
@@ -30,18 +34,27 @@ class BaseLayer():
 
     
     def _to_cpu(self):
+        """Layer의 parameter를 vram에서 ram으로 옮김
+        """
         param_list = list(self.parameter.keys())
         for param in param_list:
             self.parameter[param] = to_cpu(self.parameter[param])
             
     
     def _to_gpu(self):
+        """Layer의 parameter를 ram에서 vram으로 옮김
+        """
         param_list = list(self.parameter.keys())
         for param in param_list:
             self.parameter[param] = to_gpu(self.parameter[param])
     
     
     def _save_params(self):
+        """Layer의 parameter 반환
+
+        Returns:
+            OrderedDict
+        """
         return deepcopy(self.parameter)
     
     
@@ -51,8 +64,7 @@ class BaseLayer():
 
 class DenseLayer(BaseLayer):
     def __init__(self, input_size: int, output_size: int, initialize: str = "He"):
-        """
-        Initialize DenseLayer
+        """Initialize DenseLayer
 
         Parameters
         ----------
@@ -68,7 +80,7 @@ class DenseLayer(BaseLayer):
         self.output_size = output_size
         self.differentiable = True
         self.x = None
-        # for 4-dim tensor
+        # 4-dim tensor 대응ㄴ
         self.orgin_x_shape = None
 
         if initialize == "He":
@@ -92,7 +104,17 @@ class DenseLayer(BaseLayer):
         self.emb_dw = np.zeros_like(self.parameter["weight"]).T
 
 
-    def __call__(self, arg):
+    def __call__(self, arg: np.ndarray):
+        """Wrapper function for _forward()
+
+        Parameters
+        ----------
+        Args:
+            arg (numpy.ndarray): 이전 layer의 forward 결과
+
+        Returns:
+            numpy.ndarray
+        """
         result = self._forward(arg)
         return result
 
@@ -101,7 +123,16 @@ class DenseLayer(BaseLayer):
         return "DenseLayer"
 
     
-    def _forward(self, x):
+    def _forward(self, x: np.ndarray)-> np.ndarray:
+        """DenseLayer의 feedforward
+
+        Args:
+            x (np.ndarray): 이전 layer의 feedforward 결과
+
+        Returns:
+            np.ndarray: DenseLayer의 feedforward 결과
+        """
+        # sequnce 대응
         if x.ndim == 3:
             batch_size, n_timestep, _ = x.shape
             reshaped_x = x.reshape(batch_size * n_timestep, -1)
@@ -110,7 +141,8 @@ class DenseLayer(BaseLayer):
             result = result.reshape(batch_size, n_timestep, -1)
 
             return result
-
+        
+        # 4-dim tensor 대응
         self.origin_x_shape = x.shape
         x = x.reshape(x.shape[0], -1)
         self.x = x
@@ -119,19 +151,14 @@ class DenseLayer(BaseLayer):
         return result
 
     
-    def _backward(self, input):
-        """
-        
-        Parameter
-        ---------
-        input : 다음 layer의 해당 layer의 output에 대한 미분값
+    def _backward(self, input:np.ndarray)-> np.ndarray:
+        """DenseLayer의 backpropagation
 
-        Variable
-        --------
-        dx = forward시 input에 대한 미분값으로 이전 layer로 넘겨준다.
-        self.dw = weight에 대한 미분값
-        self.db = bias에 대한 미분값
+        Args:
+            input (np.ndarray): 이전 layer의 backpropagation 결과
 
+        Returns:
+            np.ndarray: DenseLayer의 backpropagation 결과
         """
         if self.x.ndim == 3:
             x = self.x
@@ -166,7 +193,12 @@ class DenseLayer(BaseLayer):
         self.parameter["bias"] = np.array(bias)
 
 
-    def get_gradient(self):
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """
         grad = OrderedDict()
         if self.tying:
             emb_dw_copied = deepcopy(self.emb_dw)
@@ -308,7 +340,12 @@ class EmbeddingLayer(BaseLayer):
 
         return None
 
-    def get_gradient(self):
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """        
         grad = OrderedDict()
         grad["dw"] = self.dw
 
@@ -417,7 +454,12 @@ class ConvLayer(BaseLayer):
         return result
 
 
-    def get_gradient(self):
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """        
         grad = OrderedDict()
         grad["dw"] = self.dw
         grad["db"] = self.db
@@ -703,7 +745,12 @@ class RNNLayer(BaseLayer):
         return dx
 
 
-    def get_gradient(self):
+    def get_gradient(self)-> OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """
         grad = OrderedDict()
         grad["dwx"] = self.dwx
         grad["dwh"] = self.dwh
@@ -1024,7 +1071,12 @@ class BatchNorm1D(BaseLayer):
             self.input_reshaped = False
         
     
-    def get_gradient(self):
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """
         grad = OrderedDict()
         grad["dgamma"] = self.dgamma
         grad["dbeta"] = self.dbeta
@@ -1139,7 +1191,12 @@ class BatchNorm2D(BaseLayer):
         self.input_reshaped = True
     
     
-    def get_gradient(self):
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """
         grad = OrderedDict()
         grad["dgamma"] = self.dgamma
         grad["dbeta"] = self.dbeta
@@ -1165,22 +1222,22 @@ class Dropout(BaseLayer):
         return result
     
     
-    # def _forward(self, x):
-    #     if self.train_flg:
-    #         self.mask = np.random.rand(*x.shape) > self.dropout_ratio
-    #         return x * self.mask
-    #     else:
-    #         return x * (1.0 - self.dropout_ratio)
-
     def _forward(self, x):
-        if self.train_flg:
-            flg = np.random.rand(*x.shape) > self.dropout_ratio
-            scale = 1 / (1.0 - self.dropout_ratio)
-            self.mask = flg.astype(np.float32) * scale
+        if x.ndim == 3:
+            if self.train_flg:
+                flg = np.random.rand(*x.shape) > self.dropout_ratio
+                scale = 1 / (1.0 - self.dropout_ratio)
+                self.mask = flg.astype(np.float32) * scale
 
-            return x * self.mask
+                return x * self.mask
+            else:
+                return x
         else:
-            return x
+            if self.train_flg:
+                self.mask = np.random.rand(*x.shape) > self.dropout_ratio
+                return x * self.mask
+            else:
+                return x * (1.0 - self.dropout_ratio)
 
     def _backward(self, dout):
         return dout * self.mask
@@ -1196,6 +1253,8 @@ class Dropout(BaseLayer):
 
 class Model(BaseModel):
     def __init__(self, *layers):
+        """매개 변수에 layer 객체를 순차적으로 전달하면서 초기화
+        """
         super().__init__()
         self.sequence = []
         self.grad = OrderedDict()
@@ -1350,7 +1409,12 @@ class Model(BaseModel):
                 layer._to_gpu()
             
     
-    def save_params(self, fn = None):
+    def save_params(self, fn:str = None):
+        """Model의 parameter .pkl 확장자로 저장
+
+        Args:
+            fn (str): parameter를 저장할 경로 + 파일 이름 + .pkl, Defaults to None.
+        """
         model_param = OrderedDict()
         for layer_name in self.sequence:
             layer = self.network[layer_name]
@@ -1365,7 +1429,12 @@ class Model(BaseModel):
             pickle.dump(model_param, f)
             
     
-    def load_params(self, fn = None):
+    def load_params(self, fn:str = None):
+        """.pkl 확장자로 저장되어있던 Model의 parameter를 가져온다
+
+        Args:
+            fn (str): parameter가 저장된 경로 + 파일 이름 + .pkl, Defaults to None.
+        """
         with open(fn, 'rb') as f:
             model_param = deepcopy(pickle.load(f))
             

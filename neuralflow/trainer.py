@@ -53,10 +53,9 @@ class ClassificationTrainer(BaseTrainer):
         self.critic = critic
         self.optimizer = optimizer
 
-        self.train_accuracy_list = np.array([])
-        self.valid_accuracy_list = np.array([])
+        self.train_accuracy_list = np.array([0])
+        self.valid_accuracy_list = np.array([0])
         
-
 
     def _forward(self, x, y):
         pred = self.model(x)
