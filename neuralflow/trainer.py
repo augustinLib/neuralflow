@@ -29,6 +29,22 @@ class BaseTrainer():
     def __repr__(self):
         return "Trainer"
 
+    
+    def get_train_loss_list(self):
+        return self.train_loss_list
+    
+    
+    def get_train_loss_list_iter(self):
+        return self.train_loss_list_iter
+    
+    
+    def get_valid_loss_list(self):
+        return self.valid_loss_list
+    
+    
+    def get_train_loss_list_iter(self):
+        return self.valid_loss_list_iter
+    
 
 class ClassificationTrainer(BaseTrainer):
     def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01):
@@ -72,7 +88,7 @@ class ClassificationTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, valid_dataloader = None, show_iter_num=20):
+    def train(self, train_dataloader, valid_dataloader = None, show_iter_num=1):
         """
         Train model with train/valid data
 
@@ -83,19 +99,25 @@ class ClassificationTrainer(BaseTrainer):
         valid_dataloader (iterable) : Valid dataloader that can iterate with batch size in valid dataset
 
         """
+        
         for epoch in range(self.n_epochs):
-            self.model.train_state()
+            
             print(f"epoch {epoch+1}")
+            self.model.train_state()
             tmp_train_loss = np.array([])
             iter_tmp_train_loss = np.array([])
             count = 0
             train_correct_num = 0
             y_num = 0
             for x, y in tqdm(train_dataloader):
+                count+=1
                 train_loss = self._forward(x, y)
+                self._backward()
+                self._update()
+
                 tmp_train_loss = np.append(tmp_train_loss, train_loss)
                 pred = np.argmax(self.critic.pred, axis=1)
-
+                
                 if y.ndim != 1:
                     y = np.argmax(y, axis=1)
                 train_correct_num += np.sum(pred==y)
@@ -111,14 +133,13 @@ class ClassificationTrainer(BaseTrainer):
                 
                 print(f"train loss : {train_loss:.6f}    train accuarcy : {train_temp_accuracy:.6f}\r", end="")
 
-                self._backward()
-                self._update()
-            
-                
-            epoch_train_loss = np.sum(tmp_train_loss) / train_dataloader.batch_size
-            self.train_loss_list = np.append(self.train_loss_list, epoch_train_loss)
+
             
             dataset_len = train_dataloader.dataset_len()
+            
+            epoch_train_loss = np.sum(tmp_train_loss) / len(tmp_train_loss)
+            self.train_loss_list = np.append(self.train_loss_list, epoch_train_loss)
+            
             epoch_train_accuracy = train_correct_num/float(dataset_len) * 100
             self.train_accuracy_list = np.append(self.train_accuracy_list, epoch_train_accuracy)
             print()
@@ -131,10 +152,8 @@ class ClassificationTrainer(BaseTrainer):
                 print("----------------------------------------------------------------")    
 
 
-
-
-    def _validate(self, valid_dataloader, epoch, show_iter_num = 20):
-        self.model.valid_state()
+    def _validate(self, valid_dataloader, epoch, show_iter_num = 1):
+        self.model.eval_state()
         self.model.reset_rnn_state()
         tmp_valid_loss = np.array([])
         iter_tmp_valid_loss = np.array([])
@@ -142,6 +161,7 @@ class ClassificationTrainer(BaseTrainer):
         valid_correct_num = 0
         y_num = 0
         for x, y in tqdm(valid_dataloader):
+            count+=1
             valid_loss = self._forward(x, y)
             tmp_valid_loss = np.append(tmp_valid_loss, valid_loss)
             pred = np.argmax(self.critic.pred, axis=1)
@@ -160,9 +180,11 @@ class ClassificationTrainer(BaseTrainer):
 
             print(f"valid loss : {valid_loss:.6f}    valid accuarcy : {valid_temp_accuracy:.6f}\r", end="")
 
-        epoch_valid_loss = np.sum(tmp_valid_loss) / valid_dataloader.batch_size
-        self.valid_loss_list = np.append(self.valid_loss_list, epoch_valid_loss)
         dataset_len = valid_dataloader.dataset_len()
+        
+        epoch_valid_loss = np.sum(tmp_valid_loss) / len(tmp_valid_loss)
+        self.valid_loss_list = np.append(self.valid_loss_list, epoch_valid_loss)
+        
         epoch_valid_accuracy = valid_correct_num/float(dataset_len) * 100
         self.valid_accuracy_list = np.append(self.valid_accuracy_list, epoch_valid_accuracy)
         self.model.reset_rnn_state()
@@ -226,6 +248,54 @@ class ClassificationTrainer(BaseTrainer):
         print(f"metic {metric.keys()} added")
         self.metric = dict(self.metric, metric)
         
+    
+    def eval_accuracy(self, test_dataloader, show_iter_num = 1):
+        self.model.eval_state()
+        self.model.reset_rnn_state()
+        tmp_test_loss = np.array([])
+        iter_tmp_test_loss = np.array([])
+        count = 0
+        test_correct_num = 0
+        y_num = 0
+        for x, y in tqdm(test_dataloader):
+            count+=1
+            test_loss = self._forward(x, y)
+            tmp_test_loss = np.append(tmp_test_loss, test_loss)
+            pred = np.argmax(self.critic.pred, axis=1)
+            if y.ndim != 1:
+                y = np.argmax(y, axis=1)
+            test_correct_num += np.sum(pred==y)
+            y_num += len(y)
+            
+            test_temp_accuracy = test_correct_num/y_num*100
+            iter_tmp_test_loss = np.append(iter_tmp_test_loss, test_loss)
+            
+            if count % show_iter_num == 0:
+                iter_test_loss = np.sum(iter_tmp_test_loss) / show_iter_num
+                iter_tmp_test_loss = np.array([])
+                self.test_loss_list_iter = np.append(self.test_loss_list_iter, iter_test_loss)
+
+        dataset_len = test_dataloader.dataset_len()
+        
+        epoch_test_loss = np.sum(tmp_test_loss) / len(tmp_test_loss)
+        self.test_loss_list = np.append(self.test_loss_list, epoch_test_loss)
+        
+        epoch_test_accuracy = test_correct_num/float(dataset_len) * 100
+        self.test_accuracy_list = np.append(self.test_accuracy_list, epoch_test_accuracy)
+        self.model.reset_rnn_state()
+        
+        print()
+        print(f"test loss : {epoch_test_loss}    test accuarcy : {epoch_test_accuracy}")
+        print("----------------------------------------------------------------")    
+        
+        
+    def get_train_accuracy_list(self):
+        return self.train_accuracy_list
+    
+    
+    def get_valid_accuracy_list(self):
+        return self.valid_accuracy_list
+    
         
 class LanguageModelTrainer(BaseTrainer):
     def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01):
@@ -270,7 +340,7 @@ class LanguageModelTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, valid_dataloader = None, max_grad = None, show_iter_num = 20):
+    def train(self, train_dataloader, valid_dataloader = None, max_grad = None, show_iter_num = 1):
         """
         Train model with train/valid data
 
@@ -340,8 +410,8 @@ class LanguageModelTrainer(BaseTrainer):
                 print()
 
 
-    def _validate(self, valid_dataloader, epoch, show_iter_num = 20):
-        self.model.valid_state()
+    def _validate(self, valid_dataloader, epoch, show_iter_num = 1):
+        self.model.eval_state()
         self.model.reset_rnn_state()
         tmp_valid_loss = np.array([])
         iter_tmp_valid_loss = np.array([])
@@ -479,7 +549,7 @@ class LanguageModelTrainer(BaseTrainer):
 
     def eval_perplexity(self, test_dataloader):
         print('Test perplexity ...')
-        self.model.valid_state()
+        self.model.eval_state()
         self.model.reset_rnn_state()
         
         tmp_test_loss = np.array([])
@@ -500,3 +570,19 @@ class LanguageModelTrainer(BaseTrainer):
 
         print()
         print(f"test loss : {epoch_test_loss:.6f}    test perplexity : {epoch_test_perplexity:.6f}")
+        
+        
+    def get_train_ppl_list(self):
+        return self.train_perplexity_list
+    
+    
+    def get_train_ppl_list_iter(self):
+        return self.train_perplexity_list_iter
+    
+    
+    def get_valid_ppl_list(self):
+        return self.valid_perplexity_list
+    
+    
+    def get_train_ppl_list_iter(self):
+        return self.valid_perplexity_list_iter
