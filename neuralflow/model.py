@@ -80,7 +80,7 @@ class DenseLayer(BaseLayer):
         self.output_size = output_size
         self.differentiable = True
         self.x = None
-        # 4-dim tensor 대응ㄴ
+        # 4-dim tensor 대응
         self.orgin_x_shape = None
 
         if initialize == "He":
@@ -390,8 +390,8 @@ class ConvLayer(BaseLayer):
 
         self.stride = stride
         self.padding = padding
-        self.fan_in = kernel_size * kernel_size * input_channel
-        self.fan_out = kernel_size * kernel_size * output_channel
+        self.fan_in = self.kernel_width * self.kernel_height * input_channel
+        self.fan_out = self.kernel_width * self.kernel_height * output_channel
 
         self.x = None
         self.col = None
@@ -469,8 +469,8 @@ class ConvLayer(BaseLayer):
 
     def img2col(self, input_data):
         n_input, n_input_channel, input_height, input_width = input_data.shape
-        out_height = (input_height + self.padding * 2 - self.kernel_height) // self.stride + 1
-        out_width = (input_width + self.padding * 2 -self.kernel_width) // self.stride + 1
+        out_height = int((input_height + self.padding * 2 - self.kernel_height) // self.stride + 1)
+        out_width = int((input_width + self.padding * 2 -self.kernel_width) // self.stride + 1)
 
         img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
         col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
@@ -487,8 +487,8 @@ class ConvLayer(BaseLayer):
 
     def col2img(self, col, input_shape):
         n_input, n_input_channel, input_height, input_width = input_shape
-        out_height = (input_height + 2 * self.padding - self.kernel_height) // self.stride + 1
-        out_width = (input_width + 2 * self.padding - self.kernel_width) // self.stride + 1
+        out_height = int((input_height + 2 * self.padding - self.kernel_height) // self.stride + 1)
+        out_width = int((input_width + 2 * self.padding - self.kernel_width) // self.stride + 1)
         col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
 
         img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
@@ -967,7 +967,7 @@ class BatchNorm1D(BaseLayer):
         super().__init__()
         self.changeability = True
         self.differentiable = True
-        self.train_flg=True
+        self.train_fig=True
         self.num_features = num_features
 
         self.parameter["gamma"] = np.ones(num_features).astype(np.float32)
@@ -1015,7 +1015,7 @@ class BatchNorm1D(BaseLayer):
             self.mean = np.zeros(input_dim)
             self.var = np.zeros(input_dim)
                         
-        if self.train_flg:
+        if self.train_fig:
             mu = x.mean(axis=0)
             xc = x - mu
             var = np.mean(xc**2, axis=0)
@@ -1084,13 +1084,21 @@ class BatchNorm1D(BaseLayer):
         return grad
     
     
+    def train_state(self):
+        self.train_fig = True
+        
+    
+    def eval_state(self):
+        self.train_fig = False
+    
+    
     
 class BatchNorm2D(BaseLayer):
     def __init__(self, num_features, eps=1e-05, momentum=0.9):
         super().__init__()
         self.changeability = True
         self.differentiable = True
-        self.train_flg=True
+        self.train_fig=True
         self.num_features = num_features
 
         self.eps = eps
@@ -1135,7 +1143,7 @@ class BatchNorm2D(BaseLayer):
             self.mean = np.zeros(input_dim)
             self.var = np.zeros(input_dim)
                         
-        if self.train_flg:
+        if self.train_fig:
             mu = x.mean(axis=0)
             xc = x - mu
             var = np.mean(xc**2, axis=0)
@@ -1202,6 +1210,14 @@ class BatchNorm2D(BaseLayer):
         grad["dbeta"] = self.dbeta
 
         return grad
+    
+    
+    def train_state(self):
+        self.train_fig = True
+        
+    
+    def eval_state(self):
+        self.train_fig = False
 
 
 class Dropout(BaseLayer):
@@ -1209,7 +1225,7 @@ class Dropout(BaseLayer):
         super().__init__()
         self.changeability = True
         self.dropout_ratio = dropout_ratio
-        self.train_flg=True
+        self.train_fig=True
         self.mask = None
         
         
@@ -1217,38 +1233,38 @@ class Dropout(BaseLayer):
         return "Dropout"
 
 
-    def __call__(self, *args):
-        result = self._forward(*args)
+    def __call__(self, args):
+        result = self._forward(args)
         return result
     
     
     def _forward(self, x):
-        if x.ndim == 3:
-            if self.train_flg:
-                flg = np.random.rand(*x.shape) > self.dropout_ratio
-                scale = 1 / (1.0 - self.dropout_ratio)
-                self.mask = flg.astype(np.float32) * scale
-
-                return x * self.mask
-            else:
-                return x
+        if self.train_fig:
+            fig = np.random.rand(*x.shape) > self.dropout_ratio
+            scale = 1 / (1.0 - self.dropout_ratio)
+            self.mask = fig.astype(np.float32) * scale
+            return x * self.mask
         else:
-            if self.train_flg:
-                self.mask = np.random.rand(*x.shape) > self.dropout_ratio
-                return x * self.mask
-            else:
-                return x * (1.0 - self.dropout_ratio)
+            return x
+
+            # if self.train_fig:
+            #     self.mask = np.random.rand(*x.shape) > self.dropout_ratio
+            #     return x * self.mask
+            # else:
+            #     return x * (1.0 - self.dropout_ratio)
+
+
 
     def _backward(self, dout):
         return dout * self.mask
     
     
     def train_state(self):
-        self.train_flg = True
+        self.train_fig = True
         
     
-    def valid_state(self):
-        self.train_flg = False
+    def eval_state(self):
+        self.train_fig = False
 
 
 class Model(BaseModel):
@@ -1331,14 +1347,6 @@ class Model(BaseModel):
             layer = self.network[layer_name]
             result = layer._backward(result)
 
-    
-    def update(self, lr= 0.01):
-        for layer_name in self.sequence:
-            layer = self.network[layer_name]
-            if layer.differentiable:
-                self.network[layer_name].parameter["weight"] -= (lr * layer.dw)
-                self.network[layer_name].parameter["bias"] -= (lr * layer.db)
-
 
     def get_gradient(self):
         grad = OrderedDict()
@@ -1364,14 +1372,14 @@ class Model(BaseModel):
         for layer_name in self.sequence:
             layer = self.network[layer_name]
             if layer.changeability:
-                layer.train_flg = True
+                layer.train_state()
 
     
-    def valid_state(self):
+    def eval_state(self):
         for layer_name in self.sequence:
             layer = self.network[layer_name]
             if layer.changeability:
-                layer.train_flg = False
+                layer.eval_state()
                 
     
     def reset_rnn_state(self):
