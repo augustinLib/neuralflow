@@ -3,10 +3,11 @@ import matplotlib.pyplot as plt
 from collections import OrderedDict
 from neuralflow.gpu import *
 from neuralflow.utils import *
+import time
 
 
 class BaseTrainer():
-    def __init__(self, n_epochs= 10, init_lr=0.01):
+    def __init__(self, n_epochs= 10, init_lr=0.01, file_name = None):
         """
         Base class for Trainer
 
@@ -24,7 +25,11 @@ class BaseTrainer():
         self.train_loss_list_iter = np.array([])
         self.valid_loss_list = np.array([])
         self.valid_loss_list_iter = np.array([])
-
+        self.test_loss_list = np.array([])
+        self.test_loss_list_iter = np.array([])
+        self.best_valid_loss = 0
+        self.file_name = file_name
+        self.train_time = np.array([])
 
     def __repr__(self):
         return "Trainer"
@@ -47,7 +52,7 @@ class BaseTrainer():
     
 
 class ClassificationTrainer(BaseTrainer):
-    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01):
+    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01, file_name= None):
         """
         Trainer for Classification
 
@@ -64,13 +69,14 @@ class ClassificationTrainer(BaseTrainer):
         init_lr (int) : initial learning rate. Default: 0.01
 
         """
-        super().__init__(n_epochs, init_lr)
+        super().__init__(n_epochs, init_lr, file_name=file_name)
         self.model = model
         self.critic = critic
         self.optimizer = optimizer
 
         self.train_accuracy_list = np.array([0])
         self.valid_accuracy_list = np.array([0])
+        self.test_accuracy_list = np.array([0])
         
 
     def _forward(self, x, y):
@@ -101,7 +107,7 @@ class ClassificationTrainer(BaseTrainer):
         """
         
         for epoch in range(self.n_epochs):
-            
+            start_time = time.time()
             print(f"epoch {epoch+1}")
             self.model.train_state()
             tmp_train_loss = np.array([])
@@ -145,7 +151,10 @@ class ClassificationTrainer(BaseTrainer):
             print()
             print(f"epoch {epoch+1} -- train loss : {epoch_train_loss}    train accuarcy : {epoch_train_accuracy}")
             
-            
+            finish_time = time.time()
+            epoch_time = finish_time - start_time
+            self.train_time = np.append(self.train_time, epoch_time)
+            print(f"{epoch_time:.1f}s elapsed")
             if valid_dataloader is not None:
                 self._validate(valid_dataloader, epoch, show_iter_num=show_iter_num)
             else:
@@ -188,6 +197,11 @@ class ClassificationTrainer(BaseTrainer):
         epoch_valid_accuracy = valid_correct_num/float(dataset_len) * 100
         self.valid_accuracy_list = np.append(self.valid_accuracy_list, epoch_valid_accuracy)
         self.model.reset_rnn_state()
+        
+        if epoch_valid_loss < self.best_valid_loss and self.file_name != None:
+            self.model.save_params(self.file_name)
+            self.best_valid_loss = epoch_valid_loss
+        
         
         print()
         print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss}    valid accuarcy : {epoch_valid_accuracy}")
@@ -267,7 +281,6 @@ class ClassificationTrainer(BaseTrainer):
             test_correct_num += np.sum(pred==y)
             y_num += len(y)
             
-            test_temp_accuracy = test_correct_num/y_num*100
             iter_tmp_test_loss = np.append(iter_tmp_test_loss, test_loss)
             
             if count % show_iter_num == 0:
