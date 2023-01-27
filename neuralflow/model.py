@@ -2,6 +2,7 @@ import pickle
 from copy import deepcopy
 from collections import OrderedDict
 from neuralflow.function import *
+from neuralflow.function_class import *
 from neuralflow.gpu import *    
 from neuralflow.utils import *
 
@@ -28,6 +29,7 @@ class BaseLayer():
         """
         self.differentiable = False
         self.changeability = False
+        self.mixed_precision = False
         self.tying = False
         self.tied = False
         self.parameter = OrderedDict()
@@ -500,6 +502,44 @@ class ConvLayer(BaseLayer):
 
         return img[:, :, self.padding:input_height + self.padding, self.padding:input_width + self.padding]
 
+
+class GlobalAveragePoolingLayer(BaseLayer):
+    def __init__(self):
+        super().__init__()
+        self.x = None
+        
+    def __repr__(self):
+        return "GlobalAveragePoolingLayer"
+    
+    
+    def __call__(self, arg):
+        result = self._forward(arg)
+        return result    
+
+
+    def _forward(self, x):
+        n_input, n_input_channel, input_height, input_width = x.shape
+        self.x = x
+        
+        reshaped_x = x.reshape(n_input, n_input_channel, -1)
+        
+        # result = (n_input, n_input_channel)
+        result = reshaped_x.mean(axis=2)
+
+        return result
+
+    
+    def _backward(self, input):
+        # input = (n_input, n_input_channel)
+        n_input, n_input_channel, input_height, input_width = self.x.shape
+        temp_result = input * (1/input_height * input_width)
+    
+        temp_reshaped = temp_result.reshape(n_input, n_input_channel, 1, 1)
+        temp_reshaped = np.repeat(temp_reshaped, input_width, axis=3)
+        result = np.repeat(temp_reshaped, input_height, axis=2)
+        
+        return result  
+    
 
 class MaxPoolingLayer(BaseLayer):
     def __init__(self, kernel_size, stride = 1, padding = 0):
@@ -1100,7 +1140,8 @@ class BatchNorm2D(BaseLayer):
         self.differentiable = True
         self.train_fig=True
         self.num_features = num_features
-
+        self.parameter["gamma"] = None
+        self.parameter["beta"] = None
         self.eps = eps
         self.momentum = momentum
         
@@ -1254,7 +1295,6 @@ class Dropout(BaseLayer):
             #     return x * (1.0 - self.dropout_ratio)
 
 
-
     def _backward(self, dout):
         return dout * self.mask
     
@@ -1265,7 +1305,7 @@ class Dropout(BaseLayer):
     
     def eval_state(self):
         self.train_fig = False
-
+        
 
 class Model(BaseModel):
     def __init__(self, *layers):
@@ -1358,14 +1398,16 @@ class Model(BaseModel):
         return grad
     
 
-    def add_layer(self, layer):
-        if repr(layer) not in self.count_dict.keys():
-            self.count_dict[repr(layer)] = 1
-            
-        self.layers += (layer,)
-        self.network[f"{repr(layer)}{self.count_dict[repr(layer)]}"] = layer
-        self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
-        self.count_dict[repr(layer)] += 1
+    def add_layer(self, *layers):
+        tuple_layers = layers
+        for layer in tuple_layers:            
+            if repr(layer) not in self.count_dict.keys():
+                self.count_dict[repr(layer)] = 1
+
+            self.layers += (layer,)
+            self.network[f"{repr(layer)}{self.count_dict[repr(layer)]}"] = layer
+            self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
+            self.count_dict[repr(layer)] += 1
         
         
     def train_state(self):
@@ -1450,3 +1492,18 @@ class Model(BaseModel):
             layer = self.network[layer_name]
             if layer.differentiable:
                 layer._load_params(model_param[layer_name])
+                
+                
+    def mixed_precision_on(self):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            layer.mixed_precision = True
+        
+        
+    def mixed_precision_off(self):
+        for layer_name in self.sequence:
+            layer = self.network[layer_name]
+            layer.mixed_precision = False
+            
+            
+
