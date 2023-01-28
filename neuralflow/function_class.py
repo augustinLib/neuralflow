@@ -5,16 +5,24 @@ class BaseFunction():
     def __init__(self):
         self.differentiable = False
         self.changeability = False
+        self.mixed_precision = False
+
 
     def __call__(self, arg):
         result = self._forward(arg)
         return result
 
+
     def _forward(self, x):
         pass
 
+
     def __repr__(self) -> str:
         return "Function"
+    
+    
+    def _mixed_precision_training(self):
+        self.mixed_precision = True
 
 
 class Step(BaseFunction):
@@ -102,15 +110,16 @@ class ReLU(BaseFunction):
         return result
 
 
-
 class CrossEntropyLoss():
-    def __init__(self):
+    def __init__(self, scaling_factor = None):
         self.loss = None
         self.pred = None
         self.true = None
         self.cache = None
         self.ignore_label = -1
-
+        self.mixed_precision = False
+        self.scaling_factor = scaling_factor
+        
     def __repr__(self):
         return "Function"
 
@@ -121,9 +130,9 @@ class CrossEntropyLoss():
 
 
     def _forward(self, pred, true):
+        pred = pred.astype(np.float64)
         if pred.ndim == 3:
             batch_size, n_timestep, vocab_size = pred.shape
-
             if true.ndim == 3:
                 true = true.argmax(axis=2)
             
@@ -132,22 +141,22 @@ class CrossEntropyLoss():
             self.pred = pred.reshape(batch_size * n_timestep, vocab_size)
             self.true = true.reshape(batch_size * n_timestep)
             mask = mask.reshape(batch_size * n_timestep)
-
             pred_sentence = softmax(self.pred)
             ls = np.log(pred_sentence[np.arange(batch_size * n_timestep), self.true])
             ls *= mask
             self.loss = -np.sum(ls)
             self.loss /= mask.sum()
-
             self.cache = (self.true, pred_sentence, mask, (batch_size, n_timestep, vocab_size))
             
-            return self.loss
         else:
             self.pred = softmax(pred)
             self.true = true
             self.loss = cross_entropy_error(self.pred, self.true)
+            
+        if self.scaling_factor != None:
+            self.loss = self.loss * self.scaling_factor
 
-            return self.loss
+        return self.loss
 
     def _backward(self):
         if self.cache is not None:
@@ -170,8 +179,8 @@ class CrossEntropyLoss():
             dx = self.pred.copy()
             dx[np.arange(batch_size), self.true] -= 1
             dx = dx / batch_size
-
-        return dx
+        
+            return dx
 
 
 class BinaryCrossEntropyLoss():

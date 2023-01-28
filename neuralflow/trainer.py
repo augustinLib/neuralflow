@@ -27,7 +27,7 @@ class BaseTrainer():
         self.valid_loss_list_iter = np.array([])
         self.test_loss_list = np.array([])
         self.test_loss_list_iter = np.array([])
-        self.best_valid_loss = 0
+        self.best_valid_loss = 100
         self.file_name = file_name
         self.train_time = np.array([])
 
@@ -113,6 +113,7 @@ class ClassificationTrainer(BaseTrainer):
             tmp_train_loss = np.array([])
             iter_tmp_train_loss = np.array([])
             count = 0
+            iter_num = len(train_dataloader)
             train_correct_num = 0
             y_num = 0
             for x, y in tqdm(train_dataloader):
@@ -137,7 +138,7 @@ class ClassificationTrainer(BaseTrainer):
                     iter_tmp_train_loss = np.array([])
                     self.train_loss_list_iter = np.append(self.train_loss_list_iter, iter_train_loss)
                 
-                print(f"train loss : {train_loss:.6f}    train accuarcy : {train_temp_accuracy:.6f}\r", end="")
+                print(f"train loss : {train_loss:.6f}    train accuarcy : {train_temp_accuracy:.6f}    iter : {count}/{iter_num}\r", end="")
 
 
             

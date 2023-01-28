@@ -62,6 +62,10 @@ class BaseLayer():
     
     def _load_params(self, params):
         self.parameter = deepcopy(params)
+        
+    
+    def _mixed_precision_training(self):
+        self.mixed_precision = True
     
 
 class DenseLayer(BaseLayer):
@@ -134,21 +138,40 @@ class DenseLayer(BaseLayer):
         Returns:
             np.ndarray: DenseLayer의 feedforward 결과
         """
-        # sequnce 대응
-        if x.ndim == 3:
-            batch_size, n_timestep, _ = x.shape
-            reshaped_x = x.reshape(batch_size * n_timestep, -1)
-            self.x = x
-            result = np.matmul(reshaped_x, self.parameter["weight"]) + self.parameter["bias"]
-            result = result.reshape(batch_size, n_timestep, -1)
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            # sequnce 대응
+            if x.ndim == 3:
+                batch_size, n_timestep, _ = x.shape
+                reshaped_x = x.reshape(batch_size * n_timestep, -1)
+                self.x = x
+                result = np.matmul(reshaped_x, self.parameter["weight"].astype(np.float16)) + self.parameter["bias"].astype(np.float16)
+                result = result.reshape(batch_size, n_timestep, -1)
 
-            return result
-        
-        # 4-dim tensor 대응
-        self.origin_x_shape = x.shape
-        x = x.reshape(x.shape[0], -1)
-        self.x = x
-        result = np.matmul(x, self.parameter["weight"]) + self.parameter["bias"]
+                return result
+
+            # 4-dim tensor 대응
+            self.origin_x_shape = x.shape
+            x = x.reshape(x.shape[0], -1)
+            self.x = x
+            result = np.matmul(x, self.parameter["weight"].astype(np.float16)) + self.parameter["bias"].astype(np.float16)
+
+        else:
+            # sequnce 대응
+            if x.ndim == 3:
+                batch_size, n_timestep, _ = x.shape
+                reshaped_x = x.reshape(batch_size * n_timestep, -1)
+                self.x = x
+                result = np.matmul(reshaped_x, self.parameter["weight"]) + self.parameter["bias"]
+                result = result.reshape(batch_size, n_timestep, -1)
+
+                return result
+
+            # 4-dim tensor 대응
+            self.origin_x_shape = x.shape
+            x = x.reshape(x.shape[0], -1)
+            self.x = x
+            result = np.matmul(x, self.parameter["weight"]) + self.parameter["bias"]
 
         return result
 
@@ -162,31 +185,58 @@ class DenseLayer(BaseLayer):
         Returns:
             np.ndarray: DenseLayer의 backpropagation 결과
         """
-        if self.x.ndim == 3:
-            x = self.x
-            batch_size, n_timestep, _ = x.shape
-            input = input.reshape(batch_size * n_timestep, -1)
-            reshaped_x = x.reshape(batch_size * n_timestep, -1)
+        if self.mixed_precision:
+            input = input.astype(np.float16)
+            if self.x.ndim == 3:
+                x = self.x
+                batch_size, n_timestep, _ = x.shape
+                input = input.reshape(batch_size * n_timestep, -1)
+                reshaped_x = x.reshape(batch_size * n_timestep, -1)
 
-            db = np.sum(input, axis=0)
-            dw = np.matmul(reshaped_x.T, input)
-            dx = np.matmul(input, self.parameter["weight"].T)
-            dx = dx.reshape(*x.shape)
-            
-            self.dw[...] = dw
-            self.db[...] = db
+                db = np.sum(input, axis=0)
+                dw = np.matmul(reshaped_x.T, input)
+                dx = np.matmul(input, self.parameter["weight"].T.astype(np.float16))
+                dx = dx.reshape(*x.shape)
 
-            return dx
-        
+                self.dw[...] = dw
+                self.db[...] = db
+
+                return dx
+
+            else:
+                dx = np.matmul(input, self.parameter["weight"].T.astype(np.float16))
+                self.dw = np.matmul(self.x.T, input)
+                self.db = np.sum(input, axis=0)
+
+                # for 4-dim tensor
+                dx = dx.reshape(*self.origin_x_shape)
+
         else:
-            dx = np.matmul(input, self.parameter["weight"].T)
-            self.dw = np.matmul(self.x.T, input)
-            self.db = np.sum(input, axis=0)
+            if self.x.ndim == 3:
+                x = self.x
+                batch_size, n_timestep, _ = x.shape
+                input = input.reshape(batch_size * n_timestep, -1)
+                reshaped_x = x.reshape(batch_size * n_timestep, -1)
 
-            # for 4-dim tensor
-            dx = dx.reshape(*self.origin_x_shape)
+                db = np.sum(input, axis=0)
+                dw = np.matmul(reshaped_x.T, input)
+                dx = np.matmul(input, self.parameter["weight"].T)
+                dx = dx.reshape(*x.shape)
 
-            return dx
+                self.dw[...] = dw
+                self.db[...] = db
+
+                return dx
+
+            else:
+                dx = np.matmul(input, self.parameter["weight"].T)
+                self.dw = np.matmul(self.x.T, input)
+                self.db = np.sum(input, axis=0)
+
+                # for 4-dim tensor
+                dx = dx.reshape(*self.origin_x_shape)
+                
+        return dx
 
 
     def load_parameter(self, parameter: tuple):
@@ -204,16 +254,22 @@ class DenseLayer(BaseLayer):
         grad = OrderedDict()
         if self.tying:
             emb_dw_copied = deepcopy(self.emb_dw)
-            grad["dw"] = self.dw + emb_dw_copied.T
+            grad["dw"] = self.dw + emb_dw_copied.T.astype(np.float32)
         else:
-            grad["dw"] = self.dw
-        grad["db"] = self.db
+            grad["dw"] = self.dw.astype(np.float32)
+        grad["db"] = self.db.astype(np.float32)
 
         return grad
+    
+    
+    def _fp16_grad(self):
+        self.dw = np.zeros_like(self.parameter["weight"]).astype(np.float16)
+        self.db = np.zeros_like(self.parameter["bias"]).astype(np.float16)
+        self.emb_dw = np.zeros_like(self.parameter["weight"]).T.astype(np.float16)
 
 
 class Embedding(BaseLayer):
-    def __init__(self, parameter):
+    def __init__(self, parameter, mixed_precision = False):
         """
         Initialize EmbeddingLayer
 
@@ -231,6 +287,7 @@ class Embedding(BaseLayer):
         self.index = None
         self.parameter["weight"] = parameter["weight"]
         self.dw = np.zeros_like(self.parameter["weight"])
+        self.mixed_precision = mixed_precision
 
 
     def __call__(self, arg):
@@ -243,9 +300,16 @@ class Embedding(BaseLayer):
 
     
     def _forward(self, index):
-        self.index = index
-        weight = self.parameter["weight"]
-        result = weight[index]
+        if self.mixed_precision:
+            self.index = index
+            weight = self.parameter["weight"].astype(np.float16)
+            result = weight[index]
+        
+        else:
+            self.index = index
+            weight = self.parameter["weight"]
+            result = weight[index]
+            
         return result
 
     
@@ -263,19 +327,30 @@ class Embedding(BaseLayer):
         self.db = bias에 대한 미분값
 
         """
-        dw = self.dw
-        dw[...] = 0
-        if GPU:
-            import cupyx
-            cupyx.scatter_add(dw, self.index, input)
-        else:
-            np.add.at(dw, self.index, input)
+        if self.mixed_precision:
+            input = input.astype(np.float16)
+            dw = self.dw.astype(np.float16)
+            dw[...] = 0
+            if GPU:
+                import cupyx
+                cupyx.scatter_add(dw, self.index, input)
+            else:
+                np.add.at(dw, self.index, input)
 
+        else:
+            dw = self.dw
+            dw[...] = 0
+            if GPU:
+                import cupyx
+                cupyx.scatter_add(dw, self.index, input)
+            else:
+                np.add.at(dw, self.index, input)
+                
         return None
 
 
-    def _get_gradient(self):
-        dw = self.dw
+    def _get_gradient(self, mixed_precision_training=False):
+        dw = self.dw.astype(np.float32)
 
         return dw
 
@@ -290,10 +365,8 @@ class EmbeddingLayer(BaseLayer):
         if initialize == "He":
             self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
 
-
         elif initialize == "Xavier":
             self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
-
 
         elif initialize == "None":
             self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
@@ -315,30 +388,59 @@ class EmbeddingLayer(BaseLayer):
 
 
     def _forward(self, x):
-        batch_size, n_timestep = x.shape
+        # Mixed Precision Training
+        if self.mixed_precision:
+            batch_size, n_timestep = x.shape
 
-        result = np.empty((batch_size, n_timestep, self.hidden_size), dtype="f")
-        self.layer = []
-        
-        for timestep in range(n_timestep):
-            embedding_cell = Embedding(self.parameter)
-            result[:, timestep, :] = embedding_cell._forward(x[:, timestep])
-            self.layer.append(embedding_cell)
+            result = np.empty((batch_size, n_timestep, self.hidden_size), dtype="f").astype(np.float16)
+            self.layer = []
+
+            for timestep in range(n_timestep):
+                embedding_cell = Embedding(self.parameter, mixed_precision = True)
+                result[:, timestep, :] = embedding_cell._forward(x[:, timestep])
+                self.layer.append(embedding_cell)
+
+        else:
+            batch_size, n_timestep = x.shape
+    
+            result = np.empty((batch_size, n_timestep, self.hidden_size), dtype="f")
+            self.layer = []
+            
+            for timestep in range(n_timestep):
+                embedding_cell = Embedding(self.parameter)
+                result[:, timestep, :] = embedding_cell._forward(x[:, timestep])
+                self.layer.append(embedding_cell)
 
         return result
 
     def _backward(self, dout):
-        w = self.parameter["weight"]
-        batch_size, n_timestep, hidden_size = dout.shape
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dout = dout.astype(np.float16)
+            w = self.parameter["weight"].astype(np.float16)
+            batch_size, n_timestep, hidden_size = dout.shape
 
-        dw = np.zeros_like(w).astype(np.float32)
-        for timestep in range(n_timestep):
-            embedding_cell = self.layer[timestep]
-            embedding_cell._backward(dout[:, timestep, :])
-            temp_dw = embedding_cell._get_gradient()
-            dw += temp_dw
-        
-        self.dw[...] = dw
+            dw = np.zeros_like(w).astype.astype(np.float16)
+            for timestep in range(n_timestep):
+                embedding_cell = self.layer[timestep]
+                embedding_cell._backward(dout[:, timestep, :])
+                temp_dw = embedding_cell._get_gradient(mixed_precision_training=True)
+                dw += temp_dw
+
+            self.dw[...] = dw
+
+        else:
+            w = self.parameter["weight"]
+            batch_size, n_timestep, hidden_size = dout.shape
+
+            dw = np.zeros_like(w).astype(np.float32)
+            for timestep in range(n_timestep):
+                embedding_cell = self.layer[timestep]
+                embedding_cell._backward(dout[:, timestep, :])
+                temp_dw = embedding_cell._get_gradient()
+                dw += temp_dw
+
+            self.dw[...] = dw
 
         return None
 
@@ -349,9 +451,12 @@ class EmbeddingLayer(BaseLayer):
             OrderedDict: Layer의 gradient
         """        
         grad = OrderedDict()
-        grad["dw"] = self.dw
+        grad["dw"] = self.dw.astype(np.float32)
 
         return grad
+    
+    def _fp16_grad(self):
+        self.dw = np.zeros_like(self.parameter["weight"]).astype(np.float16)
 
 
 class ConvLayer(BaseLayer):
@@ -427,31 +532,61 @@ class ConvLayer(BaseLayer):
 
 
     def _forward(self, x):
-        n_input, n_input_channel, input_height, input_width = x.shape
-        out_height = int(1 + (input_height + self.padding * 2 - self.kernel_height) / self.stride)
-        out_width = int(1 + (input_width + self.padding * 2 - self.kernel_width) / self.stride)
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            n_input, n_input_channel, input_height, input_width = x.shape
+            out_height = int(1 + (input_height + self.padding * 2 - self.kernel_height) / self.stride)
+            out_width = int(1 + (input_width + self.padding * 2 - self.kernel_width) / self.stride)
 
-        col = self.img2col(x)
-        col_weight = self.parameter["weight"].reshape(self.output_channel, -1).T
-        result = np.matmul(col, col_weight) + self.parameter["bias"]
-        result = result.reshape(n_input, out_height, out_width, -1).transpose(0, 3, 1, 2)
+            col = self.img2col(x).astype(np.float16)
+            col_weight = self.parameter["weight"].reshape(self.output_channel, -1).T.astype(np.float16)
+            result = np.matmul(col, col_weight) + self.parameter["bias"].astype(np.float16)
+            result = result.reshape(n_input, out_height, out_width, -1).transpose(0, 3, 1, 2)
 
-        self.x = x
-        self.col = col
-        self.col_weight = col_weight
+            self.x = x
+            self.col = col
+            self.col_weight = col_weight
+        
+        else:
+            n_input, n_input_channel, input_height, input_width = x.shape
+            out_height = int(1 + (input_height + self.padding * 2 - self.kernel_height) / self.stride)
+            out_width = int(1 + (input_width + self.padding * 2 - self.kernel_width) / self.stride)
+
+            col = self.img2col(x)
+            col_weight = self.parameter["weight"].reshape(self.output_channel, -1).T
+            result = np.matmul(col, col_weight) + self.parameter["bias"]
+            result = result.reshape(n_input, out_height, out_width, -1).transpose(0, 3, 1, 2)
+
+            self.x = x
+            self.col = col
+            self.col_weight = col_weight
 
         return result
 
     
     def _backward(self, input):
-        input = input.transpose(0,2,3,1).reshape(-1, self.output_channel)
+        # Mixed Precision Training
+        if self.mixed_precision:
+            input = input.astype(np.float16)
+            input = input.transpose(0,2,3,1).reshape(-1, self.output_channel)
 
-        self.dw = np.matmul(self.col.T, input)
-        self.dw = self.dw.transpose(1,0).reshape(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width)
-        self.db = np.sum(input, axis=0)
+            self.dw = np.matmul(self.col.T.astype(np.float16), input)
+            self.dw = self.dw.transpose(1,0).reshape(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width)
+            self.db = np.sum(input, axis=0)
 
-        dcol = np.matmul(input, self.col_weight.T)
-        result = self.col2img(dcol, self.x.shape)
+            dcol = np.matmul(input, self.col_weight.T.astype(np.float16))
+            result = self.col2img(dcol, self.x.shape)
+            
+        else:
+            input = input.transpose(0,2,3,1).reshape(-1, self.output_channel)
+
+            self.dw = np.matmul(self.col.T, input)
+            self.dw = self.dw.transpose(1,0).reshape(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width)
+            self.db = np.sum(input, axis=0)
+
+            dcol = np.matmul(input, self.col_weight.T)
+            result = self.col2img(dcol, self.x.shape)
 
         return result
 
@@ -463,42 +598,83 @@ class ConvLayer(BaseLayer):
             OrderedDict: Layer의 gradient
         """        
         grad = OrderedDict()
-        grad["dw"] = self.dw
-        grad["db"] = self.db
+        grad["dw"] = self.dw.astype(np.float32)
+        grad["db"] = self.db.astype(np.float32)
 
         return grad
-
+    
+    
+    def _fp16_grad(self):
+        self.dw = np.zeros_like(self.parameter["weight"]).astype(np.float16)
+        self.db = np.zeros_like(self.parameter["bias"]).astype(np.float16)
+    
 
     def img2col(self, input_data):
-        n_input, n_input_channel, input_height, input_width = input_data.shape
-        out_height = int((input_height + self.padding * 2 - self.kernel_height) // self.stride + 1)
-        out_width = int((input_width + self.padding * 2 -self.kernel_width) // self.stride + 1)
+        # Mixed Precision Training
+        if self.mixed_precision:
+            input_data = input_data.astype(np.float16)
+            n_input, n_input_channel, input_height, input_width = input_data.shape
+            out_height = int((input_height + self.padding * 2 - self.kernel_height) // self.stride + 1)
+            out_width = int((input_width + self.padding * 2 -self.kernel_width) // self.stride + 1)
 
-        img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
-        col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
+            img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
+            col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float16)
 
-        for y in range(self.kernel_height):
-            y_max = y + self.stride * out_height
-            for x in range(self.kernel_width):
-                x_max = x + self.stride * out_width
-                col[:, :, y, x, :, :] = img[:, :, y:y_max:self.stride, x:x_max:self.stride]
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    col[:, :, y, x, :, :] = img[:, :, y:y_max:self.stride, x:x_max:self.stride]
 
-        col = col.transpose(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1)
+            col = col.transpose(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1)
+            
+        else:
+            n_input, n_input_channel, input_height, input_width = input_data.shape
+            out_height = int((input_height + self.padding * 2 - self.kernel_height) // self.stride + 1)
+            out_width = int((input_width + self.padding * 2 -self.kernel_width) // self.stride + 1)
+
+            img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
+            col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
+
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    col[:, :, y, x, :, :] = img[:, :, y:y_max:self.stride, x:x_max:self.stride]
+
+            col = col.transpose(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1)
+            
         return col
 
 
     def col2img(self, col, input_shape):
-        n_input, n_input_channel, input_height, input_width = input_shape
-        out_height = int((input_height + 2 * self.padding - self.kernel_height) // self.stride + 1)
-        out_width = int((input_width + 2 * self.padding - self.kernel_width) // self.stride + 1)
-        col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
+        # Mixed Precision Training
+        if self.mixed_precision:
+            col = col.astype(np.float16)
+            n_input, n_input_channel, input_height, input_width = input_shape
+            out_height = int((input_height + 2 * self.padding - self.kernel_height) // self.stride + 1)
+            out_width = int((input_width + 2 * self.padding - self.kernel_width) // self.stride + 1)
+            col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
 
-        img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
-        for y in range(self.kernel_height):
-            y_max = y + self.stride * out_height
-            for x in range(self.kernel_width):
-                x_max = x + self.stride * out_width
-                img[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
+            img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float16)
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    img[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
+                    
+        else:  
+            n_input, n_input_channel, input_height, input_width = input_shape
+            out_height = int((input_height + 2 * self.padding - self.kernel_height) // self.stride + 1)
+            out_width = int((input_width + 2 * self.padding - self.kernel_width) // self.stride + 1)
+            col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
+
+            img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    img[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
 
         return img[:, :, self.padding:input_height + self.padding, self.padding:input_width + self.padding]
 
@@ -568,71 +744,137 @@ class MaxPoolingLayer(BaseLayer):
 
 
     def _forward(self, x):
-        n_input, n_input_channel, input_height, input_width = x.shape
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            n_input, n_input_channel, input_height, input_width = x.shape
 
-        out_height = int(1 + (input_height + self.padding * 2 - self.kernel_height) / self.stride)
-        out_width = int(1 + (input_width + self.padding * 2 - self.kernel_width) / self.stride)
+            out_height = int(1 + (input_height + self.padding * 2 - self.kernel_height) / self.stride)
+            out_width = int(1 + (input_width + self.padding * 2 - self.kernel_width) / self.stride)
 
-        col = self.img2col(x)
-        col = col.reshape(-1, self.kernel_height * self.kernel_width)
+            col = self.img2col(x).astype(np.float16)
+            col = col.reshape(-1, self.kernel_height * self.kernel_width)
 
-        self.x = x
-        self.mask = np.argmax(col, axis=1) # (-1, self.kernel_height*kernel_width)
-        result = np.max(col, axis=1)
-        result = result.reshape(n_input, out_height, out_width, n_input_channel).transpose(0, 3, 1, 2)
+            self.x = x
+            self.mask = np.argmax(col, axis=1) # (-1, self.kernel_height*kernel_width)
+            result = np.max(col, axis=1)
+            result = result.reshape(n_input, out_height, out_width, n_input_channel).transpose(0, 3, 1, 2)
+            
+        else:
+            n_input, n_input_channel, input_height, input_width = x.shape
+
+            out_height = int(1 + (input_height + self.padding * 2 - self.kernel_height) / self.stride)
+            out_width = int(1 + (input_width + self.padding * 2 - self.kernel_width) / self.stride)
+
+            col = self.img2col(x)
+            col = col.reshape(-1, self.kernel_height * self.kernel_width)
+
+            self.x = x
+            self.mask = np.argmax(col, axis=1) # (-1, self.kernel_height*kernel_width)
+            result = np.max(col, axis=1)
+            result = result.reshape(n_input, out_height, out_width, n_input_channel).transpose(0, 3, 1, 2)
 
         return result
 
     
     def _backward(self, input):
-        input = input.transpose(0, 2, 3, 1) # (n_input, n_input_channel, input_height, input_width) -> (n_input, out_height, out_width, n_input_channel)
-        kernel_size = self.kernel_height * self.kernel_width
-        dmax = np.zeros((input.size, kernel_size)).astype(np.float32) # (n_input*n_input_channel*input_height*input_width, self.kernel_height*kernel_width)
-        dmax[np.arange(self.mask.size), self.mask.flatten()] = input.flatten()
-        dmax = dmax.reshape(input.shape + (kernel_size,))
+        # Mixed Precision Training
+        if self.mixed_precision:
+            input = input.astype(np.float16)
+            input = input.transpose(0, 2, 3, 1) # (n_input, n_input_channel, input_height, input_width) -> (n_input, out_height, out_width, n_input_channel)
+            kernel_size = self.kernel_height * self.kernel_width
+            dmax = np.zeros((input.size, kernel_size)).astype(np.float16) # (n_input*n_input_channel*input_height*input_width, self.kernel_height*kernel_width)
+            dmax[np.arange(self.mask.size), self.mask.flatten()] = input.flatten()
+            dmax = dmax.reshape(input.shape + (kernel_size,))
 
-        dcol = dmax.reshape(dmax.shape[0] * dmax.shape[1] * dmax.shape[2], -1)
-        result = self.col2img(dcol, self.x.shape)
+            dcol = dmax.reshape(dmax.shape[0] * dmax.shape[1] * dmax.shape[2], -1)
+            result = self.col2img(dcol, self.x.shape)
+            
+        else:
+            input = input.transpose(0, 2, 3, 1) # (n_input, n_input_channel, input_height, input_width) -> (n_input, out_height, out_width, n_input_channel)
+            kernel_size = self.kernel_height * self.kernel_width
+            dmax = np.zeros((input.size, kernel_size)).astype(np.float32) # (n_input*n_input_channel*input_height*input_width, self.kernel_height*kernel_width)
+            dmax[np.arange(self.mask.size), self.mask.flatten()] = input.flatten()
+            dmax = dmax.reshape(input.shape + (kernel_size,))
+
+            dcol = dmax.reshape(dmax.shape[0] * dmax.shape[1] * dmax.shape[2], -1)
+            result = self.col2img(dcol, self.x.shape)
 
         return result  
 
     
     def img2col(self, input_data):
-        n_input, n_input_channel, input_height, input_width = input_data.shape
-        out_height = (input_height + self.padding * 2 - self.kernel_height) // self.stride + 1
-        out_width = (input_width + self.padding * 2 -self.kernel_width) // self.stride + 1
+        # Mixed Precision Training
+        if self.mixed_precision:
+            input_data = input_data.astype(np.float16)
+            n_input, n_input_channel, input_height, input_width = input_data.shape
+            out_height = (input_height + self.padding * 2 - self.kernel_height) // self.stride + 1
+            out_width = (input_width + self.padding * 2 -self.kernel_width) // self.stride + 1
 
-        img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
-        col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
+            img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
+            col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float16)
 
-        for y in range(self.kernel_height):
-            y_max = y + self.stride * out_height
-            for x in range(self.kernel_width):
-                x_max = x + self.stride * out_width
-                col[:, :, y, x, :, :] = img[:, :, y:y_max:self.stride, x:x_max:self.stride]
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    col[:, :, y, x, :, :] = img[:, :, y:y_max:self.stride, x:x_max:self.stride]
 
-        col = col.transpose(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1)
+            col = col.transpose(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1)
+            
+        else:
+            n_input, n_input_channel, input_height, input_width = input_data.shape
+            out_height = (input_height + self.padding * 2 - self.kernel_height) // self.stride + 1
+            out_width = (input_width + self.padding * 2 -self.kernel_width) // self.stride + 1
+
+            img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
+            col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
+
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    col[:, :, y, x, :, :] = img[:, :, y:y_max:self.stride, x:x_max:self.stride]
+
+            col = col.transpose(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1)
+            
         return col
 
 
     def col2img(self, col, input_shape):
-        n_input, n_input_channel, input_height, input_width = input_shape
-        out_height = (input_height + 2 * self.padding - self.kernel_height) // self.stride + 1
-        out_width = (input_width + 2 * self.padding - self.kernel_width) // self.stride + 1
-        col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
+        # Mixed Precision Training
+        if self.mixed_precision:
+            col = col.astype(np.float16)
+            n_input, n_input_channel, input_height, input_width = input_shape
+            out_height = (input_height + 2 * self.padding - self.kernel_height) // self.stride + 1
+            out_width = (input_width + 2 * self.padding - self.kernel_width) // self.stride + 1
+            col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
 
-        img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
-        for y in range(self.kernel_height):
-            y_max = y + self.stride * out_height
-            for x in range(self.kernel_width):
-                x_max = x + self.stride * out_width
-                img[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
+            img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float16)
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    img[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
+                    
+        else:
+            n_input, n_input_channel, input_height, input_width = input_shape
+            out_height = (input_height + 2 * self.padding - self.kernel_height) // self.stride + 1
+            out_width = (input_width + 2 * self.padding - self.kernel_width) // self.stride + 1
+            col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
+
+            img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
+            for y in range(self.kernel_height):
+                y_max = y + self.stride * out_height
+                for x in range(self.kernel_width):
+                    x_max = x + self.stride * out_width
+                    img[:, :, y:y_max:self.stride, x:x_max:self.stride] += col[:, :, y, x, :, :]
 
         return img[:, :, self.padding:input_height + self.padding, self.padding:input_width + self.padding]
 
 
 class RNNCell(BaseLayer):
-    def __init__(self, parameter):
+    def __init__(self, parameter, mixed_precision = False):
         super().__init__()
         self.differentiable = True  
         self.parameter["weight_x"] = parameter["weight_x"]
@@ -643,6 +885,7 @@ class RNNCell(BaseLayer):
         self.dwh = None
         self.db = None
         self.cache = None
+        self.mixed_precision = mixed_precision
 
 
     def __repr__(self):
@@ -655,37 +898,70 @@ class RNNCell(BaseLayer):
 
     
     def _forward(self, x, h_t_prev):
-        # (batch_size, hidden_size) x (hidden_size, hidden_size) + (batch_size, input_dim) x (input_dim, hidden_size)
-        # => (batch_size, hidden_size)
-        temp_t = np.matmul(h_t_prev, self.parameter["weight_h"]) + np.matmul(x, self.parameter["weight_x"]) + self.parameter["bias"] 
-        result_t = np.tanh(temp_t)
-        # self.cache에 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 저장
-        self.cache = x, h_t_prev, result_t
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x= x.astype(np.float16)
+            h_t_prev = h_t_prev.astype(np.float16)
+            # (batch_size, hidden_size) x (hidden_size, hidden_size) + (batch_size, input_dim) x (input_dim, hidden_size)
+            # => (batch_size, hidden_size)
+            temp_t = np.matmul(h_t_prev, self.parameter["weight_h"].astype(np.float16)) + np.matmul(x, self.parameter["weight_x"].astype(np.float16)) + self.parameter["bias"].astype(np.float16) 
+            result_t = np.tanh(temp_t)
+            # self.cache에 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 저장
+            self.cache = x, h_t_prev, result_t
+            
+        else:
+            # (batch_size, hidden_size) x (hidden_size, hidden_size) + (batch_size, input_dim) x (input_dim, hidden_size)
+            # => (batch_size, hidden_size)
+            temp_t = np.matmul(h_t_prev, self.parameter["weight_h"]) + np.matmul(x, self.parameter["weight_x"]) + self.parameter["bias"] 
+            result_t = np.tanh(temp_t)
+            # self.cache에 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 저장
+            self.cache = x, h_t_prev, result_t
 
         # (batch_size, hidden_size)
         return result_t
 
 
     def _backward(self, input):
-        # self.cache에 저장된 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 불러오기
-        x, h_t_prev, result_t = self.cache
-        # dtanh = 1 - tanh(x)^2
-        dtanh = input * (1 - result_t ** 2)
-        self.db = np.sum(dtanh, axis=0)
-        self.dwh = np.matmul(h_t_prev.T, dtanh)
-        self.dwx = np.matmul(x.T, dtanh)
-        h_result = np.matmul(dtanh, self.parameter["weight_h"].T)
-        x_result = np.matmul(dtanh, self.parameter["weight_x"].T)
-        self.dx = x_result
+        # Mixed Precision Training
+        if self.mixed_precision:
+            input = input.astype(np.float16)
+            # self.cache에 저장된 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 불러오기
+            x, h_t_prev, result_t = self.cache
+            # dtanh = 1 - tanh(x)^2
+            dtanh = input * (1 - result_t ** 2)
+            self.db = np.sum(dtanh, axis=0).astype(np.float16)
+            self.dwh = np.matmul(h_t_prev.T, dtanh).astype(np.float16)
+            self.dwx = np.matmul(x.T, dtanh).astype(np.float16)
+            h_result = np.matmul(dtanh, self.parameter["weight_h"].T.astype(np.float16))
+            x_result = np.matmul(dtanh, self.parameter["weight_x"].T.astype(np.float16))
+            self.dx = x_result
+            
+        else:
+            # self.cache에 저장된 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 불러오기
+            x, h_t_prev, result_t = self.cache
+            # dtanh = 1 - tanh(x)^2
+            dtanh = input * (1 - result_t ** 2)
+            self.db = np.sum(dtanh, axis=0)
+            self.dwh = np.matmul(h_t_prev.T, dtanh)
+            self.dwx = np.matmul(x.T, dtanh)
+            h_result = np.matmul(dtanh, self.parameter["weight_h"].T)
+            x_result = np.matmul(dtanh, self.parameter["weight_x"].T)
+            self.dx = x_result
 
         return x_result, h_result
 
     
-    def _get_gradient(self):
-        dx = self.dx
-        dwx = self.dwx
-        dwh = self.dwh
-        db = self.db
+    def _get_gradient(self, mixed_precision_training=False):
+        if mixed_precision_training:
+            dx = self.dx.astype(np.float16)
+            dwx = self.dwx.astype(np.float16)
+            dwh = self.dwh.astype(np.float16)
+            db = self.db.astype(np.float16)
+        else:
+            dx = self.dx
+            dwx = self.dwx
+            dwh = self.dwh
+            db = self.db
 
         return dx, dwx, dwh, db
 
@@ -733,53 +1009,105 @@ class RNNLayer(BaseLayer):
         
     
     def _forward(self, x):
-        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
-        batch_size, n_timestep, input_dim = x.shape
-        input_dim, hidden_size = wx.shape
-        
-        hidden_state = np.empty((batch_size, n_timestep, hidden_size) ,dtype="f")
-        self.layer = []
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            wx, wh, b = self.parameter["weight_x"].astype(np.float16), self.parameter["weight_h"].astype(np.float16), self.parameter["bias"].astype(np.float16)
+            batch_size, n_timestep, input_dim = x.shape
+            input_dim, hidden_size = wx.shape
+            
+            hidden_state = np.empty((batch_size, n_timestep, hidden_size) ,dtype="f").astype(np.float16)
+            self.layer = []
 
-        if not self.stateful or self.h is None:
-            self.h = np.zeros((batch_size, hidden_size)).astype(np.float32)
-        
-        for timestep in range(n_timestep):
-            rnn_cell = RNNCell(self.parameter)
-            # self.h : (batch_size, 1, hidden_size)
-            self.h = rnn_cell(x[:, timestep, :], self.h)
-            hidden_state[:, timestep, :] = self.h
-            self.layer.append(rnn_cell)
+            if not self.stateful or self.h is None:
+                self.h = np.zeros((batch_size, hidden_size)).astype(np.float16)
+            
+            for timestep in range(n_timestep):
+                rnn_cell = RNNCell(self.parameter, mixed_precision=True)
+                # self.h : (batch_size, 1, hidden_size)
+                self.h = rnn_cell(x[:, timestep, :], self.h)
+                hidden_state[:, timestep, :] = self.h
+                self.layer.append(rnn_cell)
+                
+        else:
+            wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+            batch_size, n_timestep, input_dim = x.shape
+            input_dim, hidden_size = wx.shape
+            
+            hidden_state = np.empty((batch_size, n_timestep, hidden_size) ,dtype="f")
+            self.layer = []
+
+            if not self.stateful or self.h is None:
+                self.h = np.zeros((batch_size, hidden_size)).astype(np.float32)
+            
+            for timestep in range(n_timestep):
+                rnn_cell = RNNCell(self.parameter)
+                # self.h : (batch_size, 1, hidden_size)
+                self.h = rnn_cell(x[:, timestep, :], self.h)
+                hidden_state[:, timestep, :] = self.h
+                self.layer.append(rnn_cell)
 
         return hidden_state
 
     
     def _backward(self, dh):
-        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
-        batch_size, n_timestep, hidden_size  = dh.shape
-        input_dim, hidden_size = wx.shape
-        
-        dx = np.empty((batch_size, n_timestep, input_dim) ,dtype="f")
-        
-        dwx = np.zeros_like(wx).astype(np.float32)
-        dwh = np.zeros_like(wh).astype(np.float32)
-        db = np.zeros_like(b).astype(np.float32)
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dh = dh.astype(np.float16)
+            wx, wh, b = self.parameter["weight_x"].astype(np.float16), self.parameter["weight_h"].astype(np.float16), self.parameter["bias"].astype(np.float16)
+            batch_size, n_timestep, hidden_size  = dh.shape
+            input_dim, hidden_size = wx.shape
+            
+            dx = np.empty((batch_size, n_timestep, input_dim) ,dtype="f").astype(np.float16)
+            
+            dwx = np.zeros_like(wx).astype(np.float16)
+            dwh = np.zeros_like(wh).astype(np.float16)
+            db = np.zeros_like(b).astype(np.float16)
 
-        dh_t = 0
+            dh_t = 0
 
-        for timestep in reversed(range(n_timestep)):
-            rnn_cell = self.layer[timestep]
-            dx_t, dh_t = rnn_cell._backward(dh[:, timestep, :] + dh_t)
-            dx[:, timestep, :] = dx_t
+            for timestep in reversed(range(n_timestep)):
+                rnn_cell = self.layer[timestep]
+                dx_t, dh_t = rnn_cell._backward(dh[:, timestep, :] + dh_t)
+                dx[:, timestep, :] = dx_t
 
-            _, temp_dwx, temp_dwh, temp_db = rnn_cell._get_gradient()
-            dwx += temp_dwx
-            dwh += temp_dwh
-            db += temp_db
+                _, temp_dwx, temp_dwh, temp_db = rnn_cell._get_gradient(mixed_precision_training=True)
+                dwx += temp_dwx
+                dwh += temp_dwh
+                db += temp_db
 
-        self.dwx = dwx
-        self.dwh = dwh
-        self.db = db
-        self.dh = dh_t
+            self.dwx = dwx
+            self.dwh = dwh
+            self.db = db
+            self.dh = dh_t
+            
+        else:
+            wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+            batch_size, n_timestep, hidden_size  = dh.shape
+            input_dim, hidden_size = wx.shape
+            
+            dx = np.empty((batch_size, n_timestep, input_dim) ,dtype="f")
+            
+            dwx = np.zeros_like(wx).astype(np.float32)
+            dwh = np.zeros_like(wh).astype(np.float32)
+            db = np.zeros_like(b).astype(np.float32)
+
+            dh_t = 0
+
+            for timestep in reversed(range(n_timestep)):
+                rnn_cell = self.layer[timestep]
+                dx_t, dh_t = rnn_cell._backward(dh[:, timestep, :] + dh_t)
+                dx[:, timestep, :] = dx_t
+
+                _, temp_dwx, temp_dwh, temp_db = rnn_cell._get_gradient()
+                dwx += temp_dwx
+                dwh += temp_dwh
+                db += temp_db
+
+            self.dwx = dwx
+            self.dwh = dwh
+            self.db = db
+            self.dh = dh_t
         
         # input으로 backpropagation result 전달
         return dx
@@ -792,9 +1120,9 @@ class RNNLayer(BaseLayer):
             OrderedDict: Layer의 gradient
         """
         grad = OrderedDict()
-        grad["dwx"] = self.dwx
-        grad["dwh"] = self.dwh
-        grad["db"] = self.db
+        grad["dwx"] = self.dwx.astype(np.float32)
+        grad["dwh"] = self.dwh.astype(np.float32)
+        grad["db"] = self.db.astype(np.float32)
 
         return grad
     
@@ -805,10 +1133,14 @@ class RNNLayer(BaseLayer):
 
     def reset_state(self):
         self.h = None
+    
+    
+    def _fp16_grad(self):
+        pass
         
         
 class LSTMCell(BaseLayer):
-    def __init__(self, parameter):
+    def __init__(self, parameter, mixed_precision = False):
         super().__init__()
         self.differentiable = True
         self.parameter["weight_x"] = parameter["weight_x"]
@@ -819,6 +1151,7 @@ class LSTMCell(BaseLayer):
         self.dwx = None
         self.dwh = None
         self.db = None
+        self.mixed_precision = mixed_precision
         
         
     def __call__(self, *args):
@@ -827,65 +1160,130 @@ class LSTMCell(BaseLayer):
         
         
     def _forward(self, x, h_t_prev, c_t_prev):
-        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
-        batch_size, hidden_size = h_t_prev.shape
-        
-        a = np.matmul(x, wx) + np.matmul(h_t_prev, wh) + b
-        f_temp = a[:, :hidden_size]
-        g_temp = a[:, hidden_size:hidden_size*2]
-        i_temp = a[:, hidden_size*2:hidden_size*3]
-        o_temp = a[:, hidden_size*3:]
-        
-        f_result = sigmoid(f_temp)
-        g_result = np.tanh(g_temp)
-        i_result = sigmoid(i_temp)
-        o_result = sigmoid(o_temp)
-        
-        c_t = f_result * c_t_prev + g_result * i_result
-        h_t = o_result * np.tanh(c_t)
-        
-        self.cache = (x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t)
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            h_t_prev = h_t_prev.astype(np.float16)
+            c_t_prev = c_t_prev.astype(np.float16)
+            
+            wx, wh, b = self.parameter["weight_x"].astype(np.float16), self.parameter["weight_h"].astype(np.float16), self.parameter["bias"].astype(np.float16)
+            batch_size, hidden_size = h_t_prev.shape
+            
+            a = np.matmul(x, wx) + np.matmul(h_t_prev, wh) + b
+            f_temp = a[:, :hidden_size]
+            g_temp = a[:, hidden_size:hidden_size*2]
+            i_temp = a[:, hidden_size*2:hidden_size*3]
+            o_temp = a[:, hidden_size*3:]
+            
+            f_result = sigmoid(f_temp).astype(np.float16)
+            g_result = np.tanh(g_temp).astype(np.float16)
+            i_result = sigmoid(i_temp).astype(np.float16)
+            o_result = sigmoid(o_temp).astype(np.float16)
+            
+            c_t = f_result * c_t_prev + g_result * i_result
+            h_t = o_result * np.tanh(c_t).astype(np.float16)
+            
+            self.cache = (x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t)
+        else:
+            wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+            batch_size, hidden_size = h_t_prev.shape
+            
+            a = np.matmul(x, wx) + np.matmul(h_t_prev, wh) + b
+            f_temp = a[:, :hidden_size]
+            g_temp = a[:, hidden_size:hidden_size*2]
+            i_temp = a[:, hidden_size*2:hidden_size*3]
+            o_temp = a[:, hidden_size*3:]
+            
+            f_result = sigmoid(f_temp)
+            g_result = np.tanh(g_temp)
+            i_result = sigmoid(i_temp)
+            o_result = sigmoid(o_temp)
+            
+            c_t = f_result * c_t_prev + g_result * i_result
+            h_t = o_result * np.tanh(c_t)
+            
+            self.cache = (x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t)
         
         return h_t, c_t
     
     
     def _backward(self, dh_t_next, dc_t_next):
-        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
-        x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t = self.cache
-        
-        tanh_c_t = np.tanh(c_t)
-        ds = dc_t_next + (dh_t_next * o_result) * (1-tanh_c_t**2)
-        do = dh_t_next * tanh_c_t
-        di = ds * g_result
-        dg = ds * i_result
-        df = ds * c_t_prev
-        
-        ddo = do * o_result * (1-o_result)
-        ddi = di * i_result * (1-i_result)
-        ddg = dg * g_result * (1-g_result**2)
-        ddf = df * f_result * (1-f_result)
-        
-        da = np.hstack((ddf, ddg, ddi, ddo))
-        
-        dc_t = ds * f_result
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dh_t_next = dh_t_next.astype(np.float16)
+            dc_t_next = dc_t_next.astype(np.float16)
+            
+            wx, wh, b = self.parameter["weight_x"].astype(np.float16), self.parameter["weight_h"].astype(np.float16), self.parameter["bias"].astype(np.float16)
+            x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t = self.cache
+            
+            tanh_c_t = np.tanh(c_t)
+            ds = dc_t_next + (dh_t_next * o_result) * (1-tanh_c_t**2)
+            do = dh_t_next * tanh_c_t
+            di = ds * g_result
+            dg = ds * i_result
+            df = ds * c_t_prev
+            
+            ddo = do * o_result * (1-o_result)
+            ddi = di * i_result * (1-i_result)
+            ddg = dg * g_result * (1-g_result**2)
+            ddf = df * f_result * (1-f_result)
+            
+            da = np.hstack((ddf, ddg, ddi, ddo))
+            
+            dc_t = ds * f_result
 
-        self.dwx = np.matmul(x.T, da)
-        self.dwh = np.matmul(h_t_prev.T, da)
-        self.db = da.sum(axis=0)
-        
-        dx = np.matmul(da, wx.T)
-        self.dx = dx
-        
-        dh_t = np.matmul(da, wh.T)
+            self.dwx = np.matmul(x.T, da)
+            self.dwh = np.matmul(h_t_prev.T, da)
+            self.db = da.sum(axis=0)
+            
+            dx = np.matmul(da, wx.T)
+            self.dx = dx
+            
+            dh_t = np.matmul(da, wh.T)
+            
+        else:
+            wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+            x, h_t_prev, c_t_prev, f_result, g_result, i_result, o_result, c_t = self.cache
+            
+            tanh_c_t = np.tanh(c_t)
+            ds = dc_t_next + (dh_t_next * o_result) * (1-tanh_c_t**2)
+            do = dh_t_next * tanh_c_t
+            di = ds * g_result
+            dg = ds * i_result
+            df = ds * c_t_prev
+            
+            ddo = do * o_result * (1-o_result)
+            ddi = di * i_result * (1-i_result)
+            ddg = dg * g_result * (1-g_result**2)
+            ddf = df * f_result * (1-f_result)
+            
+            da = np.hstack((ddf, ddg, ddi, ddo))
+            
+            dc_t = ds * f_result
+
+            self.dwx = np.matmul(x.T, da)
+            self.dwh = np.matmul(h_t_prev.T, da)
+            self.db = da.sum(axis=0)
+            
+            dx = np.matmul(da, wx.T)
+            self.dx = dx
+            
+            dh_t = np.matmul(da, wh.T)
         
         return dx, dh_t, dc_t
     
 
-    def _get_gradient(self):
-        dx = self.dx
-        dwx = self.dwx
-        dwh = self.dwh
-        db = self.db
+    def _get_gradient(self, mixed_precision_training=False):
+        if mixed_precision_training:
+            dx = self.dx.astype(np.float16)
+            dwx = self.dwx.astype(np.float16)
+            dwh = self.dwh.astype(np.float16)
+            db = self.db.astype(np.float16)
+        else:
+            dx = self.dx
+            dwx = self.dwx
+            dwh = self.dwh
+            db = self.db
 
         return dx, dwx, dwh, db
     
@@ -934,62 +1332,116 @@ class LSTMLayer(BaseLayer):
     
     
     def _forward(self, x):
-        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
-        batch_size, n_timestep, input_dim = x.shape
-        hidden_size = wh.shape[0]
-        
-        self.layer = []
-        hidden_state = np.empty((batch_size, n_timestep, hidden_size), dtype="f")
-        
-        if not self.stateful or self.h is None:
-            self.h = np.zeros((batch_size, hidden_size)).astype(np.float32)
-        if not self.stateful or self.c is None:
-            self.c = np.zeros((batch_size, hidden_size)).astype(np.float32)
-        
-        for timestep in range(n_timestep):
-            lstm_cell = LSTMCell(self.parameter)
-            self.h, self.c = lstm_cell(x[:, timestep, :], self.h, self.c)
-            hidden_state[:, timestep, :] = self.h
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            wx, wh, b = self.parameter["weight_x"].astype(np.float16), self.parameter["weight_h"].astype(np.float16), self.parameter["bias"].astype(np.float16)
+            batch_size, n_timestep, input_dim = x.shape
+            hidden_size = wh.shape[0]
             
-            self.layer.append(lstm_cell)
+            self.layer = []
+            hidden_state = np.empty((batch_size, n_timestep, hidden_size), dtype="f").astype(np.float16)
+            
+            if not self.stateful or self.h is None:
+                self.h = np.zeros((batch_size, hidden_size)).astype(np.float16)
+            if not self.stateful or self.c is None:
+                self.c = np.zeros((batch_size, hidden_size)).astype(np.float16)
+            
+            for timestep in range(n_timestep):
+                lstm_cell = LSTMCell(self.parameter, mixed_precision=True)
+                self.h, self.c = lstm_cell(x[:, timestep, :], self.h, self.c)
+                hidden_state[:, timestep, :] = self.h
+                
+                self.layer.append(lstm_cell)
+                    
+        else:
+            wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+            batch_size, n_timestep, input_dim = x.shape
+            hidden_size = wh.shape[0]
+            
+            self.layer = []
+            hidden_state = np.empty((batch_size, n_timestep, hidden_size), dtype="f")
+            
+            if not self.stateful or self.h is None:
+                self.h = np.zeros((batch_size, hidden_size)).astype(np.float32)
+            if not self.stateful or self.c is None:
+                self.c = np.zeros((batch_size, hidden_size)).astype(np.float32)
+            
+            for timestep in range(n_timestep):
+                lstm_cell = LSTMCell(self.parameter)
+                self.h, self.c = lstm_cell(x[:, timestep, :], self.h, self.c)
+                hidden_state[:, timestep, :] = self.h
+                
+                self.layer.append(lstm_cell)
             
         return hidden_state
     
     
     def _backward(self, dh):
-        wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
-        batch_size, n_timestep, hidden_size = dh.shape
-        input_dim = wx.shape[0]
-        
-        dx = np.empty((batch_size, n_timestep, input_dim), dtype="f")
-        dh_t, dc_t = 0, 0
-        
-        dwx = np.zeros_like(wx).astype(np.float32)
-        dwh = np.zeros_like(wh).astype(np.float32)
-        db = np.zeros_like(b).astype(np.float32)
-        
-        for timestep in reversed(range(n_timestep)):
-            lstm_cell = self.layer[timestep]
-            dx_t, dh_t, dc_t = lstm_cell._backward(dh[:, timestep, :] + dh_t, dc_t)
-            dx[:, timestep, :] = dx_t
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dh = dh.astype(np.float16)
+            wx, wh, b = self.parameter["weight_x"].astype(np.float16), self.parameter["weight_h"].astype(np.float16), self.parameter["bias"].astype(np.float16)
+            batch_size, n_timestep, hidden_size = dh.shape
+            input_dim = wx.shape[0]
             
-            _, temp_dwx, temp_dwh, temp_db = lstm_cell._get_gradient()
-            dwx += temp_dwx
-            dwh += temp_dwh
-            db += temp_db
+            dx = np.empty((batch_size, n_timestep, input_dim), dtype="f").astype(np.float16)
+            dh_t, dc_t = 0, 0
+            
+            dwx = np.zeros_like(wx).astype(np.float16)
+            dwh = np.zeros_like(wh).astype(np.float16)
+            db = np.zeros_like(b).astype(np.float16)
+            
+            for timestep in reversed(range(n_timestep)):
+                lstm_cell = self.layer[timestep]
+                dx_t, dh_t, dc_t = lstm_cell._backward(dh[:, timestep, :] + dh_t, dc_t)
+                dx[:, timestep, :] = dx_t
+                
+                _, temp_dwx, temp_dwh, temp_db = lstm_cell._get_gradient(mixed_precision_training=False)
+                dwx += temp_dwx
+                dwh += temp_dwh
+                db += temp_db
+            
+            self.dwx = dwx
+            self.dwh = dwh
+            self.db = db
+            self.dh = dh_t
         
-        self.dwx = dwx
-        self.dwh = dwh
-        self.db = db
-        self.dh = dh_t
-        
+        else:
+            wx, wh, b = self.parameter["weight_x"], self.parameter["weight_h"], self.parameter["bias"]
+            batch_size, n_timestep, hidden_size = dh.shape
+            input_dim = wx.shape[0]
+            
+            dx = np.empty((batch_size, n_timestep, input_dim), dtype="f")
+            dh_t, dc_t = 0, 0
+            
+            dwx = np.zeros_like(wx).astype(np.float32)
+            dwh = np.zeros_like(wh).astype(np.float32)
+            db = np.zeros_like(b).astype(np.float32)
+            
+            for timestep in reversed(range(n_timestep)):
+                lstm_cell = self.layer[timestep]
+                dx_t, dh_t, dc_t = lstm_cell._backward(dh[:, timestep, :] + dh_t, dc_t)
+                dx[:, timestep, :] = dx_t
+                
+                _, temp_dwx, temp_dwh, temp_db = lstm_cell._get_gradient()
+                dwx += temp_dwx
+                dwh += temp_dwh
+                db += temp_db
+            
+            self.dwx = dwx
+            self.dwh = dwh
+            self.db = db
+            self.dh = dh_t
+            
         return dx
+    
     
     def get_gradient(self):
         grad = OrderedDict()
-        grad["dwx"] = self.dwx
-        grad["dwh"] = self.dwh
-        grad["db"] = self.db
+        grad["dwx"] = self.dwx.astype(np.float32)
+        grad["dwh"] = self.dwh.astype(np.float32)
+        grad["db"] = self.db.astype(np.float32)
 
         return grad
     
@@ -999,7 +1451,11 @@ class LSTMLayer(BaseLayer):
     
     
     def reset_state(self):
-        self.h, self.c = None, None   
+        self.h, self.c = None, None 
+        
+
+    def _fp16_grad(self):
+        pass
     
 
 class BatchNorm1D(BaseLayer):
@@ -1050,29 +1506,58 @@ class BatchNorm1D(BaseLayer):
         return out.reshape(*self.input_shape)
             
     def __forward(self, x):
-        if self.mean is None:
-            batch_size, input_dim = x.shape
-            self.mean = np.zeros(input_dim)
-            self.var = np.zeros(input_dim)
-                        
-        if self.train_fig:
-            mu = x.mean(axis=0)
-            xc = x - mu
-            var = np.mean(xc**2, axis=0)
-            std = np.sqrt(var + self.eps)
-            xn = xc / std
-            
-            self.batch_size = x.shape[0]
-            self.xc = xc
-            self.xn = xn
-            self.std = std
-            self.mean = self.momentum * self.mean + (1-self.momentum) * mu
-            self.var = self.momentum * self.var + (1-self.momentum) * var            
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            if self.mean is None:
+                batch_size, input_dim = x.shape
+                self.mean = np.zeros(input_dim).astype(np.float16)
+                self.var = np.zeros(input_dim).astype(np.float16)
+                            
+            if self.train_fig:
+                mu = x.mean(axis=0)
+                xc = x - mu
+                var = np.mean(xc**2, axis=0)
+                std = np.sqrt(var + self.eps)
+                xn = xc / std
+                
+                self.batch_size = x.shape[0]
+                self.xc = xc
+                self.xn = xn
+                self.std = std
+                self.mean = self.momentum * self.mean + (1-self.momentum) * mu
+                self.var = self.momentum * self.var + (1-self.momentum) * var            
+            else:
+                xc = x - self.mean
+                xn = xc / ((np.sqrt(self.var + self.eps)))
+                
+            out = self.parameter["gamma"].astype(np.float16) * xn + self.parameter["beta"].astype(np.float16)
+
         else:
-            xc = x - self.mean
-            xn = xc / ((np.sqrt(self.var + self.eps)))
-            
-        out = self.parameter["gamma"] * xn + self.parameter["beta"]
+            if self.mean is None:
+                batch_size, input_dim = x.shape
+                self.mean = np.zeros(input_dim)
+                self.var = np.zeros(input_dim)
+                            
+            if self.train_fig:
+                mu = x.mean(axis=0)
+                xc = x - mu
+                var = np.mean(xc**2, axis=0)
+                std = np.sqrt(var + self.eps)
+                xn = xc / std
+                
+                self.batch_size = x.shape[0]
+                self.xc = xc
+                self.xn = xn
+                self.std = std
+                self.mean = self.momentum * self.mean + (1-self.momentum) * mu
+                self.var = self.momentum * self.var + (1-self.momentum) * var            
+            else:
+                xc = x - self.mean
+                xn = xc / ((np.sqrt(self.var + self.eps)))
+                
+            out = self.parameter["gamma"] * xn + self.parameter["beta"]
+        
         return out
 
     def _backward(self, dout):
@@ -1086,30 +1571,56 @@ class BatchNorm1D(BaseLayer):
         return dx
 
     def __backward(self, dout):
-        dbeta = dout.sum(axis=0)
-        dgamma = np.sum(self.xn * dout, axis=0)
-        dxn = self.parameter["gamma"] * dout
-        dxc = dxn / self.std
-        dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
-        dvar = 0.5 * dstd / self.std
-        dxc += (2.0 / self.batch_size) * self.xc * dvar
-        dmu = np.sum(dxc, axis=0)
-        dx = dxc - dmu / self.batch_size
-        
-        self.dgamma = dgamma
-        self.dbeta = dbeta
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dout = dout.astype(np.float16)
+            dbeta = dout.sum(axis=0)
+            dgamma = np.sum(self.xn * dout, axis=0)
+            dxn = self.parameter["gamma"].astype(np.float16) * dout
+            dxc = dxn / self.std
+            dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+            dvar = 0.5 * dstd / self.std
+            dxc += (2.0 / self.batch_size) * self.xc * dvar
+            dmu = np.sum(dxc, axis=0)
+            dx = dxc - dmu / self.batch_size
+            
+            self.dgamma = dgamma
+            self.dbeta = dbeta
+            
+        else:
+            dbeta = dout.sum(axis=0)
+            dgamma = np.sum(self.xn * dout, axis=0)
+            dxn = self.parameter["gamma"] * dout
+            dxc = dxn / self.std
+            dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+            dvar = 0.5 * dstd / self.std
+            dxc += (2.0 / self.batch_size) * self.xc * dvar
+            dmu = np.sum(dxc, axis=0)
+            dx = dxc - dmu / self.batch_size
+            
+            self.dgamma = dgamma
+            self.dbeta = dbeta
         
         return dx
     
     def _check_input(self, x):
-        if x.ndim != 2:
-            batch_size, n_input_channel, input_length = self.input_shape
-            self.parameter["gamma"] = np.ones(self.num_features*input_length).astype(np.float32)
-            self.parameter["beta"] = np.zeros(self.num_features*input_length).astype(np.float32)
-            self.input_reshaped = True
+        if self.mixed_precision:
+            if x.ndim != 2:
+                batch_size, n_input_channel, input_length = self.input_shape
+                self.parameter["gamma"] = np.ones(self.num_features*input_length).astype(np.float16)
+                self.parameter["beta"] = np.zeros(self.num_features*input_length).astype(np.float16)
+                self.input_reshaped = True
+            else:
+                self.input_reshaped = False
+                
         else:
-            self.input_reshaped = False
-        
+            if x.ndim != 2:
+                batch_size, n_input_channel, input_length = self.input_shape
+                self.parameter["gamma"] = np.ones(self.num_features*input_length).astype(np.float32)
+                self.parameter["beta"] = np.zeros(self.num_features*input_length).astype(np.float32)
+                self.input_reshaped = True
+            else:
+                self.input_reshaped = False
     
     def get_gradient(self)->OrderedDict:
         """Layer의 gradient를 return
@@ -1118,8 +1629,8 @@ class BatchNorm1D(BaseLayer):
             OrderedDict: Layer의 gradient
         """
         grad = OrderedDict()
-        grad["dgamma"] = self.dgamma
-        grad["dbeta"] = self.dbeta
+        grad["dgamma"] = self.dgamma.astype(np.float32)
+        grad["dbeta"] = self.dbeta.astype(np.float32)
 
         return grad
     
@@ -1131,6 +1642,9 @@ class BatchNorm1D(BaseLayer):
     def eval_state(self):
         self.train_fig = False
     
+    
+    def _fp16_grad(self):
+        pass
     
     
 class BatchNorm2D(BaseLayer):
@@ -1179,29 +1693,58 @@ class BatchNorm2D(BaseLayer):
         return out.reshape(*self.input_shape)
             
     def __forward(self, x):
-        if self.mean is None:
-            batch_size, input_dim = x.shape
-            self.mean = np.zeros(input_dim)
-            self.var = np.zeros(input_dim)
-                        
-        if self.train_fig:
-            mu = x.mean(axis=0)
-            xc = x - mu
-            var = np.mean(xc**2, axis=0)
-            std = np.sqrt(var + self.eps)
-            xn = xc / std
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            if self.mean is None:
+                batch_size, input_dim = x.shape
+                self.mean = np.zeros(input_dim).astype(np.float16)
+                self.var = np.zeros(input_dim).astype(np.float16)
+                            
+            if self.train_fig:
+                mu = x.mean(axis=0)
+                xc = x - mu
+                var = np.mean(xc**2, axis=0)
+                std = np.sqrt(var + self.eps)
+                xn = xc / std
+                
+                self.batch_size = x.shape[0]
+                self.xc = xc
+                self.xn = xn
+                self.std = std
+                self.mean = self.momentum * self.mean + (1-self.momentum) * mu
+                self.var = self.momentum * self.var + (1-self.momentum) * var            
+            else:
+                xc = x - self.mean
+                xn = xc / ((np.sqrt(self.var + self.eps)))
+                
+            out = self.parameter["gamma"].astype(np.float16) * xn + self.parameter["beta"].astype(np.float16)
             
-            self.batch_size = x.shape[0]
-            self.xc = xc
-            self.xn = xn
-            self.std = std
-            self.mean = self.momentum * self.mean + (1-self.momentum) * mu
-            self.var = self.momentum * self.var + (1-self.momentum) * var            
         else:
-            xc = x - self.mean
-            xn = xc / ((np.sqrt(self.var + self.eps)))
+            if self.mean is None:
+                batch_size, input_dim = x.shape
+                self.mean = np.zeros(input_dim)
+                self.var = np.zeros(input_dim)
+                            
+            if self.train_fig:
+                mu = x.mean(axis=0)
+                xc = x - mu
+                var = np.mean(xc**2, axis=0)
+                std = np.sqrt(var + self.eps)
+                xn = xc / std
+                
+                self.batch_size = x.shape[0]
+                self.xc = xc
+                self.xn = xn
+                self.std = std
+                self.mean = self.momentum * self.mean + (1-self.momentum) * mu
+                self.var = self.momentum * self.var + (1-self.momentum) * var            
+            else:
+                xc = x - self.mean
+                xn = xc / ((np.sqrt(self.var + self.eps)))
+                
+            out = self.parameter["gamma"] * xn + self.parameter["beta"]
             
-        out = self.parameter["gamma"] * xn + self.parameter["beta"]
         return out
 
 
@@ -1217,27 +1760,51 @@ class BatchNorm2D(BaseLayer):
 
 
     def __backward(self, dout):
-        dbeta = dout.sum(axis=0)
-        dgamma = np.sum(self.xn * dout, axis=0)
-        dxn = self.parameter["gamma"] * dout
-        dxc = dxn / self.std
-        dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
-        dvar = 0.5 * dstd / self.std
-        dxc += (2.0 / self.batch_size) * self.xc * dvar
-        dmu = np.sum(dxc, axis=0)
-        dx = dxc - dmu / self.batch_size
-        
-        self.dgamma = dgamma
-        self.dbeta = dbeta
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dout = dout.astype(np.float16)
+            dbeta = dout.sum(axis=0)
+            dgamma = np.sum(self.xn * dout, axis=0)
+            dxn = self.parameter["gamma"].astype(np.float16) * dout
+            dxc = dxn / self.std
+            dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+            dvar = 0.5 * dstd / self.std
+            dxc += (2.0 / self.batch_size) * self.xc * dvar
+            dmu = np.sum(dxc, axis=0)
+            dx = dxc - dmu / self.batch_size
+            
+            self.dgamma = dgamma
+            self.dbeta = dbeta
+            
+        else:
+            dbeta = dout.sum(axis=0)
+            dgamma = np.sum(self.xn * dout, axis=0)
+            dxn = self.parameter["gamma"] * dout
+            dxc = dxn / self.std
+            dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+            dvar = 0.5 * dstd / self.std
+            dxc += (2.0 / self.batch_size) * self.xc * dvar
+            dmu = np.sum(dxc, axis=0)
+            dx = dxc - dmu / self.batch_size
+            
+            self.dgamma = dgamma
+            self.dbeta = dbeta
         
         return dx
     
     
     def _initialize_param(self):
-        batch_size, n_input_channel, input_height, input_width = self.input_shape
-        self.parameter["gamma"] = np.ones(self.num_features*input_height*input_width).astype(np.float32)
-        self.parameter["beta"] = np.zeros(self.num_features*input_height*input_width).astype(np.float32)
-        self.input_reshaped = True
+        if self.mixed_precision:
+            batch_size, n_input_channel, input_height, input_width = self.input_shape
+            self.parameter["gamma"] = np.ones(self.num_features*input_height*input_width).astype(np.float16)
+            self.parameter["beta"] = np.zeros(self.num_features*input_height*input_width).astype(np.float16)
+            self.input_reshaped = True
+        
+        else:
+            batch_size, n_input_channel, input_height, input_width = self.input_shape
+            self.parameter["gamma"] = np.ones(self.num_features*input_height*input_width).astype(np.float32)
+            self.parameter["beta"] = np.zeros(self.num_features*input_height*input_width).astype(np.float32)
+            self.input_reshaped = True
     
     
     def get_gradient(self)->OrderedDict:
@@ -1247,8 +1814,8 @@ class BatchNorm2D(BaseLayer):
             OrderedDict: Layer의 gradient
         """
         grad = OrderedDict()
-        grad["dgamma"] = self.dgamma
-        grad["dbeta"] = self.dbeta
+        grad["dgamma"] = self.dgamma.astype(np.float32)
+        grad["dbeta"] = self.dbeta.astype(np.float32)
 
         return grad
     
@@ -1260,6 +1827,10 @@ class BatchNorm2D(BaseLayer):
     def eval_state(self):
         self.train_fig = False
 
+
+    def _fp16_grad(self):
+        pass
+    
 
 class Dropout(BaseLayer):
     def __init__(self, dropout_ratio=0.5):
@@ -1280,13 +1851,25 @@ class Dropout(BaseLayer):
     
     
     def _forward(self, x):
-        if self.train_fig:
-            fig = np.random.rand(*x.shape) > self.dropout_ratio
-            scale = 1 / (1.0 - self.dropout_ratio)
-            self.mask = fig.astype(np.float32) * scale
-            return x * self.mask
+        # Mixed Precision Training
+        if self.mixed_precision:
+            x = x.astype(np.float16)
+            if self.train_fig:
+                fig = np.random.rand(*x.shape).astype(np.float16) > self.dropout_ratio
+                scale = 1 / (1.0 - self.dropout_ratio)
+                self.mask = fig.astype(np.float16) * scale
+                return x * self.mask
+            else:
+                return x
+            
         else:
-            return x
+            if self.train_fig:
+                fig = np.random.rand(*x.shape) > self.dropout_ratio
+                scale = 1 / (1.0 - self.dropout_ratio)
+                self.mask = fig.astype(np.float32) * scale
+                return x * self.mask
+            else:
+                return x
 
             # if self.train_fig:
             #     self.mask = np.random.rand(*x.shape) > self.dropout_ratio
@@ -1497,13 +2080,10 @@ class Model(BaseModel):
     def mixed_precision_on(self):
         for layer_name in self.sequence:
             layer = self.network[layer_name]
-            layer.mixed_precision = True
-        
-        
-    def mixed_precision_off(self):
-        for layer_name in self.sequence:
-            layer = self.network[layer_name]
-            layer.mixed_precision = False
+            layer._mixed_precision_training()
             
+            if layer.differentiable:
+                layer._fp16_grad()
+
             
 

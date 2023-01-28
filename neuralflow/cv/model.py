@@ -51,25 +51,74 @@ class BaseModule():
     
 
 class ResNet34Module(BaseModule):
-    def __init__(self, input_channel, output_channel, kernel_size, stride, padding, residual_connect = True):
+    def __init__(self, input_channel, output_channel, kernel_size, stride, padding, residual_connect = True, initialize: str = "He"):
         super().__init__()
         self.conv1 = ConvLayer(input_channel, output_channel, kernel_size, stride, padding)
         self.conv2 = ConvLayer(output_channel, output_channel, kernel_size, stride, padding)
-        self.batch_norm = BatchNorm2D(output_channel)
+        self.batch_norm1 = BatchNorm2D(output_channel)
+        self.batch_norm2 = BatchNorm2D(output_channel)
         self.relu1 = ReLU()
         self.relu2 = ReLU()
         self.residual_connect = residual_connect
+        self.first_forwarded = False
         
         self.differentiable = True
         self.changeability = True
         self.bn_not_initialized = True
+
+        if isinstance(kernel_size, int):
+            self.kernel_width = kernel_size
+            self.kernel_height = kernel_size
+
+        elif isinstance(kernel_size, tuple):
+            self.kernel_height, self.kernel_width = kernel_size
+            
+        self.conv1_fan_in = self.kernel_width * self.kernel_height * input_channel
+        self.conv1_fan_out = self.kernel_width * self.kernel_height * output_channel
+        self.conv2_fan_in = self.kernel_width * self.kernel_height * output_channel
+        self.conv2_fan_out = self.kernel_width * self.kernel_height * output_channel
         
+        if initialize == "He":
+            self.parameter["conv1_weight"] = np.random.randn(output_channel, input_channel, self.kernel_height, self.kernel_width).astype(np.float32) * (np.sqrt(2 / self.conv1_fan_in))
+            self.parameter["conv1_bias"] = np.zeros(output_channel).astype(np.float32) 
+            self.parameter["conv2_weight"] = np.random.randn(output_channel, output_channel, self.kernel_height, self.kernel_width).astype(np.float32) * (np.sqrt(2 / self.conv2_fan_in))
+            self.parameter["conv2_bias"] = np.zeros(output_channel).astype(np.float32) 
+
+        elif initialize == "Xavier":
+            self.parameter["conv1_weight"] = np.random.randn(output_channel, input_channel, self.kernel_height, self.kernel_width).astype(np.float32) * (np.sqrt(1 / self.conv1_fan_in))
+            self.parameter["conv1_bias"] = np.zeros(output_channel).astype(np.float32) 
+            self.parameter["conv2_weight"] = np.random.randn(output_channel, output_channel, self.kernel_height, self.kernel_width).astype(np.float32) * (np.sqrt(1 / self.conv2_fan_in))
+            self.parameter["conv2_bias"] = np.zeros(output_channel).astype(np.float32) 
+
+        elif initialize == "None":
+            self.parameter["conv1_weight"] = 0.01 * np.random.randn(output_channel, input_channel, self.kernel_height, self.kernel_width).astype(np.float32)
+            self.parameter["conv1_bias"] = np.zeros(output_channel).astype(np.float32) 
+            self.parameter["conv2_weight"] = 0.01 * np.random.randn(output_channel, output_channel, self.kernel_height, self.kernel_width).astype(np.float32)
+            self.parameter["conv2_bias"] = np.zeros(output_channel).astype(np.float32) 
+
+        else:
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
+        
+        self.conv1.parameter["weight"] = self.parameter["conv1_weight"] 
+        self.conv1.parameter["bias"] = self.parameter["conv1_bias"] 
+        self.conv2.parameter["weight"] = self.parameter["conv2_weight"] 
+        self.conv2.parameter["bias"] = self.parameter["conv2_bias"]
+        self.parameter["b1_gamma"] 
+        self.parameter["b1_beta"] 
+        self.parameter["b2_gamma"]
+        self.parameter["b2_beta"]
+                
+        
+    def sync_param(self):
         self.parameter["conv1_weight"] = self.conv1.parameter["weight"]
         self.parameter["conv1_bias"] = self.conv1.parameter["bias"]
         self.parameter["conv2_weight"] = self.conv2.parameter["weight"]
         self.parameter["conv2_bias"] = self.conv2.parameter["bias"]
-        self.parameter["gamma"] = self.batch_norm.parameter["gamma"]
-        self.parameter["beta"] = self.batch_norm.parameter["beta"]
+        self.parameter["b1_gamma"] = self.batch_norm1.parameter["gamma"]
+        self.parameter["b1_beta"] = self.batch_norm1.parameter["beta"]
+        self.parameter["b2_gamma"] = self.batch_norm2.parameter["gamma"]
+        self.parameter["b2_beta"] = self.batch_norm2.parameter["beta"]
+        
         
     def __repr__(self):
         return "ResidualModule"
@@ -81,26 +130,32 @@ class ResNet34Module(BaseModule):
         
     def _forward(self, x):
         result = self.conv1(x)
+        result = self.batch_norm1(result)
         result = self.relu1(result)
         result = self.conv2(result)
+        result = self.batch_norm2(result)
         if self.residual_connect:
-            result = self.relu2(result) + x
+            result = np.add(self.relu2(result),x)
         else:
             result = self.relu2(result)
-            
-        result = self.batch_norm(result)
+        
         if self.bn_not_initialized:
-            self.parameter["gamma"] = self.batch_norm.parameter["gamma"]
-            self.parameter["beta"] = self.batch_norm.parameter["beta"]
+            self.parameter["b1_gamma"] = self.batch_norm1.parameter["gamma"]
+            self.parameter["b1_beta"] = self.batch_norm1.parameter["beta"]
+        
+            self.parameter["b2_gamma"] = self.batch_norm2.parameter["gamma"]
+            self.parameter["b2_beta"] = self.batch_norm2.parameter["beta"]
             self.bn_not_initialized = False
         
         return result
                 
     def _backward(self, dout):
-        result = self.batch_norm._backward(dout)
-        result = self.relu2._backward(result)
+        
+        result = self.relu2._backward(dout)
+        result = self.batch_norm2._backward(result)
         result = self.conv2._backward(result)
         result = self.relu1._backward(result)
+        result = self.batch_norm1._backward(result)
         result = self.conv1._backward(result)
         
         return result
@@ -116,18 +171,34 @@ class ResNet34Module(BaseModule):
         grad["c1_db"] = self.conv1.db
         grad["c2_dw"] = self.conv2.dw
         grad["c2_db"] = self.conv2.db
-        grad["dgamma"] = self.batch_norm.dgamma
-        grad["dbeta"] = self.batch_norm.dbeta
+        grad["b1_dgamma"] = self.batch_norm1.dgamma
+        grad["b1_dbeta"] = self.batch_norm1.dbeta
+        grad["b2_dgamma"] = self.batch_norm2.dgamma
+        grad["b2_dbeta"] = self.batch_norm2.dbeta
 
         return grad
     
     
     def eval_state(self):
-        self.batch_norm.eval_state()
+        self.batch_norm1.eval_state()
+        self.batch_norm2.eval_state()
         
         
     def train_state(self):
-        self.batch_norm.train_state
+        self.batch_norm1.train_state()
+        self.batch_norm2.train_state()
+        
+        
+    def sync_param(self):
+        self.parameter["conv1_weight"] = self.conv1.parameter["weight"]
+        self.parameter["conv1_bias"] = self.conv1.parameter["bias"]
+        self.parameter["conv2_weight"] = self.conv2.parameter["weight"]
+        self.parameter["conv2_bias"] = self.conv2.parameter["bias"]
+        self.parameter["b1_gamma"] = self.batch_norm1.parameter["gamma"]
+        self.parameter["b1_beta"] = self.batch_norm1.parameter["beta"]
+        self.parameter["b2_gamma"] = self.batch_norm2.parameter["gamma"]
+        self.parameter["b2_beta"] = self.batch_norm2.parameter["beta"]
+        
         
         
 class ResNet34(Model):
@@ -177,14 +248,18 @@ class ResNet34(Model):
         
         self.add_layer(
             GlobalAveragePoolingLayer(),
-            DenseLayer(512, num_class)
-        )
+            DenseLayer(512, 1000),
+            BatchNorm1D(1000),
+            ReLU(),
+            Dropout(0.3),
+            DenseLayer(1000, num_class)
+)
 
 
         
 
 class VGG16(Model):
-    def __init__(self, input_size, num_class):
+    def __init__(self, input_size, num_class, input_channel = 3):
         super().__init__()
         if isinstance(input_size, int):
             self.input_width = input_size
@@ -194,7 +269,7 @@ class VGG16(Model):
             self.input_height, self.kernel_width = input_size
         
 
-        self.add_layer(ConvLayer(3,64,(3,3), stride=1, padding=1),
+        self.add_layer(ConvLayer(input_channel,64,(3,3), stride=1, padding=1),
                         BatchNorm2D(64),
                         ReLU(),
                         ConvLayer(64,64,(3,3), stride=1, padding=1),
@@ -243,12 +318,20 @@ class VGG16(Model):
                         ReLU(),
                         MaxPoolingLayer((2,2), stride=2))
         
-        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), num_class))
+        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), 4096),
+                       BatchNorm1D(4096),
+                       ReLU(),
+                       Dropout(0.3),
+                       DenseLayer(4096, 4096),
+                       BatchNorm1D(4096),
+                       ReLU(),
+                       Dropout(0.3),
+                       DenseLayer(4096, num_class))
         
         
 
 class VGG19(Model):
-    def __init__(self, input_size, num_class):
+    def __init__(self, input_size, num_class, input_channel = 3):
         super().__init__()
         if isinstance(input_size, int):
             self.input_width = input_size
@@ -259,7 +342,7 @@ class VGG19(Model):
 
 
         self.add_layer(
-            ConvLayer(3,64,(3,3), stride=1, padding=1),
+            ConvLayer(input_channel ,64,(3,3), stride=1, padding=1),
             BatchNorm2D(64),
             ReLU(),
             ConvLayer(64,64,(3,3), stride=1, padding=1),
@@ -318,6 +401,14 @@ class VGG19(Model):
                         ReLU(),
                         MaxPoolingLayer((2,2), stride=2))
         
-        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), num_class))
+        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), 4096),
+                       BatchNorm1D(4096),
+                       ReLU(),
+                       Dropout(0.3),
+                       DenseLayer(4096, 4096),
+                       BatchNorm1D(4096),
+                       ReLU(),
+                       Dropout(0.3),
+                       DenseLayer(4096, num_class))
                        
 

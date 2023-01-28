@@ -16,6 +16,10 @@ class BaseOptimizer():
         self.param_grad_dict["conv1_bias"] = "c1_db"
         self.param_grad_dict["conv2_weight"] = "c2_dw"
         self.param_grad_dict["conv2_bias"] = "c2_db"
+        self.param_grad_dict["b1_gamma"] = "b1_dgamma"
+        self.param_grad_dict["b1_beta"] = "b1_dbeta"
+        self.param_grad_dict["b2_gamma"] = "b2_dgamma"
+        self.param_grad_dict["b2_beta"] = "b2_dbeta"
         
         
     def __repr__(self):
