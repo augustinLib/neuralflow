@@ -318,15 +318,13 @@ class VGG16(Model):
                         ReLU(),
                         MaxPoolingLayer((2,2), stride=2))
         
-        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), 4096),
-                       BatchNorm1D(4096),
+        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), 64),
                        ReLU(),
-                       Dropout(0.3),
-                       DenseLayer(4096, 4096),
-                       BatchNorm1D(4096),
+                       Dropout(0.5),
+                       DenseLayer(64, 64),
                        ReLU(),
-                       Dropout(0.3),
-                       DenseLayer(4096, num_class))
+                       Dropout(0.5),
+                       DenseLayer(64, num_class))
         
         
 
@@ -401,14 +399,49 @@ class VGG19(Model):
                         ReLU(),
                         MaxPoolingLayer((2,2), stride=2))
         
-        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), 4096),
-                       BatchNorm1D(4096),
+        self.add_layer(DenseLayer(512*(int(self.input_height//32)*int(self.input_height//32)), 64),
                        ReLU(),
-                       Dropout(0.3),
-                       DenseLayer(4096, 4096),
-                       BatchNorm1D(4096),
+                       Dropout(0.5),
+                       DenseLayer(64, 64),
                        ReLU(),
-                       Dropout(0.3),
-                       DenseLayer(4096, num_class))
+                       Dropout(0.5),
+                       DenseLayer(64, num_class))
                        
 
+class LeNet(Model):
+    def __init__(self, input_size, num_class, input_channel = 3):
+        super().__init__()
+        if isinstance(input_size, int):
+            self.input_width = input_size
+            self.input_height = input_size
+
+        elif isinstance(input_size, tuple):
+            self.input_height, self.kernel_width = input_size
+
+        self.add_layer(
+            ConvLayer(input_channel, 6, (5,5), stride=1, padding=0),
+            BatchNorm2D(6),
+            ReLU(),
+            MaxPoolingLayer((2,2), stride=2)
+            )
+        
+        self.add_layer(
+            ConvLayer(6,16,(5,5), stride=1, padding=0),
+            BatchNorm2D(16),
+            ReLU(),
+            MaxPoolingLayer((2,2), stride=2))
+        
+        self.add_layer(
+            ConvLayer(16,120,(5,5), stride=1, padding=0),
+            BatchNorm2D(120),
+            ReLU()
+        )
+        
+        self.add_layer(
+            DenseLayer(120, 84),
+            ReLU(),
+            Dropout(0.3),
+            DenseLayer(84 ,num_class)
+        )
+        
+        
