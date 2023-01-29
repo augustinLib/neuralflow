@@ -120,7 +120,7 @@ class AdaGrad(BaseOptimizer):
 
 
 class Adam(BaseOptimizer):
-    def __init__(self, lr=0.001, b1 = 0.9, b2 = 0.999, epsilon = 1e-8):
+    def __init__(self, lr=0.001, b1 = 0.9, b2 = 0.999, epsilon = 1e-8, loss_scaling = None):
         super().__init__(lr)
         self.b1 = b1
         self.b2 = b2
@@ -128,6 +128,7 @@ class Adam(BaseOptimizer):
         self.m = None
         self.v = None
         self.iter = 0
+        self.loss_scaling = loss_scaling
     
 
     def update(self, model):
@@ -156,6 +157,11 @@ class Adam(BaseOptimizer):
                 
                 grad = layer.get_gradient()
                 param_list = list(layer.parameter.keys())
+                
+                if self.loss_scaling != None:
+                    for g in grad.keys():
+                        grad[g] *= (1/self.loss_scaling)
+                    
 
                 for param in param_list:
                     # update m, v

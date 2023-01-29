@@ -111,14 +111,14 @@ class ReLU(BaseFunction):
 
 
 class CrossEntropyLoss():
-    def __init__(self, scaling_factor = None):
+    def __init__(self, loss_scaling = None):
         self.loss = None
         self.pred = None
         self.true = None
         self.cache = None
         self.ignore_label = -1
         self.mixed_precision = False
-        self.scaling_factor = scaling_factor
+        self.scaling_factor = loss_scaling
         
     def __repr__(self):
         return "Function"
@@ -153,10 +153,8 @@ class CrossEntropyLoss():
             self.true = true
             self.loss = cross_entropy_error(self.pred, self.true)
             
-        if self.scaling_factor != None:
-            self.loss = self.loss * self.scaling_factor
 
-        return self.loss
+            return self.loss
 
     def _backward(self):
         if self.cache is not None:
@@ -179,8 +177,12 @@ class CrossEntropyLoss():
             dx = self.pred.copy()
             dx[np.arange(batch_size), self.true] -= 1
             dx = dx / batch_size
+            
         
-            return dx
+        if self.scaling_factor != None:
+            dx = dx.astype(np.float16) * self.scaling_factor
+        
+        return dx
 
 
 class BinaryCrossEntropyLoss():
