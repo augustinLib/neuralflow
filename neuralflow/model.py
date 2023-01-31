@@ -111,7 +111,6 @@ class DenseLayer(BaseLayer):
 
         self.dw = np.zeros_like(self.parameter["weight"])
         self.db = np.zeros_like(self.parameter["bias"])
-        self.emb_dw = np.zeros_like(self.parameter["weight"]).T
 
 
     def __call__(self, arg: np.ndarray):
@@ -254,21 +253,11 @@ class DenseLayer(BaseLayer):
             OrderedDict: Layer의 gradient
         """
         grad = OrderedDict()
-        if self.tying:
-            emb_dw_copied = deepcopy(self.emb_dw)
-            grad["dw"] = self.dw + emb_dw_copied.T.astype(np.float32)
-        else:
-            grad["dw"] = self.dw.astype(np.float32)
+        grad["dw"] = self.dw.astype(np.float32)
         grad["db"] = self.db.astype(np.float32)
 
         return grad
     
-    
-    def _fp16_grad(self):
-        self.dw = np.zeros_like(self.parameter["weight"]).astype(np.float16)
-        self.db = np.zeros_like(self.parameter["bias"]).astype(np.float16)
-        self.emb_dw = np.zeros_like(self.parameter["weight"]).T.astype(np.float16)
-
 
 class Embedding(BaseLayer):
     def __init__(self, parameter, mixed_precision = False):
@@ -330,6 +319,7 @@ class Embedding(BaseLayer):
 
         """
         if self.mixed_precision:
+            dw = self.dw
             dw[...] = 0
             if GPU:
                 import cupyx
@@ -349,7 +339,7 @@ class Embedding(BaseLayer):
         return None
 
 
-    def _get_gradient(self, mixed_precision_training=False):
+    def _get_gradient(self):
         dw = self.dw.astype(np.float32)
 
         return dw
@@ -371,8 +361,11 @@ class EmbeddingLayer(BaseLayer):
         elif initialize == "None":
             self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
 
+        elif isinstance(initialize, int):
+            self.parameter["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+        
         else:
-            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
 
         self.layer = None
         self.dw = np.zeros_like(self.parameter["weight"]).astype(np.float32)
@@ -423,7 +416,7 @@ class EmbeddingLayer(BaseLayer):
             for timestep in range(n_timestep):
                 embedding_cell = self.layer[timestep]
                 embedding_cell._backward(dout[:, timestep, :])
-                temp_dw = embedding_cell._get_gradient(mixed_precision_training=True)
+                temp_dw = embedding_cell._get_gradient()
                 dw += temp_dw
 
             self.dw[...] = dw
@@ -948,7 +941,7 @@ class RNNCell(BaseLayer):
 
 
 class RNNLayer(BaseLayer):
-    def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
+    def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, stateful = True, initialize = "He"):
         super().__init__()
         self.differentiable = True
         self.input_size = input_size
@@ -972,7 +965,7 @@ class RNNLayer(BaseLayer):
         self.h = None
         self.dh = None
         self.layer = None
-        self.stateful = "stateful"
+        self.stateful = stateful
         self.dx = None
         self.dwx = None
         self.dwh = None
@@ -1256,7 +1249,7 @@ class LSTMCell(BaseLayer):
     
     
 class LSTMLayer(BaseLayer):
-    def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, initialize = "He"):
+    def __init__(self, input_size, hidden_size, n_layers = 1, bidirectional = True, stateful = True, initialize = "He"):
         super().__init__()
         self.differentiable = True
         self.input_size = input_size
@@ -1281,7 +1274,7 @@ class LSTMLayer(BaseLayer):
         self.c = None
         self.dh = None
         self.layer = None
-        self.stateful = True
+        self.stateful = stateful
         self.dx = None
         self.dwx = None
         self.dwh = None
@@ -1303,6 +1296,7 @@ class LSTMLayer(BaseLayer):
         if self.mixed_precision:
             wx, wh, b = self.parameter["weight_x"].astype(np.float16), self.parameter["weight_h"].astype(np.float16), self.parameter["bias"].astype(np.float16)
             batch_size, n_timestep, input_dim = x.shape
+
             hidden_size = wh.shape[0]
             
             self.layer = []
@@ -1596,10 +1590,6 @@ class BatchNorm1D(BaseLayer):
         self.train_fig = False
     
     
-    def _fp16_grad(self):
-        pass
-    
-    
 class BatchNorm2D(BaseLayer):
     def __init__(self, num_features, eps=1e-05, momentum=0.9):
         super().__init__()
@@ -1774,6 +1764,119 @@ class BatchNorm2D(BaseLayer):
     def _fp16_grad(self):
         pass
     
+    
+class LayerNorm(BaseLayer):
+    def __init__(self, input_shape, eps=1e-05, momentum=0.9):
+        super().__init__()
+        self.changeability = False
+        self.differentiable = True
+        if isinstance(input_shape, int):
+            input_shape = (input_shape, )
+        self.input_shape = tuple(input_shape)
+
+        self.parameter["gamma"] = np.ones(self.input_shape).astype(np.float32)
+        self.parameter["beta"] = np.zeros(self.input_shape).astype(np.float32)
+
+        self.eps = eps
+        self.input_shape = None
+        self.xc = None
+        self.std = None
+        self.dgamma = None
+        self.dbeta = None
+        
+        
+    def __call__(self, *args):
+        result = self._forward(*args)
+        return result
+
+
+    def __repr__(self):
+        return "LayerNormLayer"
+    
+
+    def _forward(self, x):
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dims = tuple([-(i+1) for i in range(len(x.shape[1:]))])
+            # mu.shape : (batch_size, 1, 1)
+            mu = x.mean(axis=dims, keepdims = True)
+            xc = x - mu
+            var = np.mean(xc**2, axis=dims, keepdims = True)
+            std = np.sqrt(var + self.eps)
+            xn = xc / std
+            
+            self.xc = xc
+            self.xn = xn
+            self.std = std 
+     
+            out = self.parameter["gamma"].astype(np.float16) * xn + self.parameter["beta"].astype(np.float16)
+
+        else:
+            dims = tuple([-(i+1) for i in range(len(x.shape[1:]))])
+            # mu.shape : (batch_size, 1, 1)
+            mu = x.mean(axis=dims, keepdims = True)
+            xc = x - mu
+            var = np.mean(xc**2, axis=dims, keepdims = True)
+            std = np.sqrt(var + self.eps)
+            xn = xc / std
+            
+            self.xc = xc
+            self.xn = xn
+            self.std = std 
+                
+            out = self.parameter["gamma"] * xn + self.parameter["beta"]
+        
+        return out
+
+
+    def _backward(self, dout):
+        # Mixed Precision Training
+        if self.mixed_precision:
+            dbeta = dout.sum(axis=0)
+            dbeta = dbeta.sum(axis=0)
+            dgamma = np.sum(self.xn * dout, axis=0)
+            dgamma = dgamma.sum(axis=0)
+            dxn = self.parameter["gamma"].astype(np.float16) * dout
+            dxc = dxn / self.std
+            dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+            dvar = 0.5 * dstd / self.std
+            dxc += (2.0 / self.xc[0].size) * self.xc * dvar
+            
+            dmu = np.sum(dxc, axis=0)
+            dx = dxc - dmu / self.xc[0].size
+
+            self.dgamma = dgamma
+            self.dbeta = dbeta
+            
+        else:
+            dbeta = dout.sum(axis=0)
+            dgamma = np.sum(self.xn * dout, axis=0)
+            dxn = self.parameter["gamma"] * dout
+            dxc = dxn / self.std
+            dstd = -np.sum((dxn * self.xc) / (self.std * self.std), axis=0)
+            dvar = 0.5 * dstd / self.std
+            dxc += (2.0 / self.xc[0].size) * self.xc * dvar
+            
+            dmu = np.sum(dxc, axis=0)
+            dx = dxc - dmu / self.xc[0].size
+
+            self.dgamma = dgamma
+            self.dbeta = dbeta
+        
+        return dx
+    
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """
+        grad = OrderedDict()
+        grad["dgamma"] = self.dgamma.astype(np.float32)
+        grad["dbeta"] = self.dbeta.astype(np.float32)
+
+        return grad
+
 
 class Dropout(BaseLayer):
     def __init__(self, dropout_ratio=0.5):
@@ -1830,8 +1933,9 @@ class Model(BaseModel):
         self.sequence = []
         self.grad = OrderedDict()
         
+        self.tying_weight = False
+        
         self.layers = layers
-
         self.count_dict = OrderedDict()
         temp_repr_list = []
 
@@ -1888,6 +1992,8 @@ class Model(BaseModel):
             
     def forward(self, x):
         input = x
+        if self.tying_weight:
+            self.tying_forward()
         for layer_name in self.sequence:
             layer = self.network[layer_name]
             y = layer(input)
@@ -1901,6 +2007,9 @@ class Model(BaseModel):
         for layer_name in reversed(self.sequence):
             layer = self.network[layer_name]
             result = layer._backward(result)
+        
+        if self.tying_weight:
+            self.tying_backward()
 
 
     def get_gradient(self):
@@ -1955,9 +2064,27 @@ class Model(BaseModel):
         
         emb_layer.tied = True
         final_dense_layer.tying = True
+        self.tying_weight = True
+        
+    
+    def tying_forward(self):
+        emb_layer_name = self.sequence[0]
+        final_dense_name = self.sequence[-1]
+        
+        emb_layer = self.network[emb_layer_name]
+        final_dense_layer = self.network[final_dense_name]
         
         emb_layer.parameter["weight"] = final_dense_layer.parameter["weight"].T
-        final_dense_layer.emb_dw = emb_layer.dw
+        
+        
+    def tying_backward(self):
+        emb_layer_name = self.sequence[0]
+        final_dense_name = self.sequence[-1]
+        
+        emb_layer = self.network[emb_layer_name]
+        final_dense_layer = self.network[final_dense_name]
+
+        final_dense_layer.dw += emb_layer.dw.T
         
     
     def to_cpu(self):

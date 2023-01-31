@@ -130,7 +130,6 @@ class CrossEntropyLoss():
 
 
     def _forward(self, pred, true):
-        pred = pred.astype(np.float64)
         if pred.ndim == 3:
             batch_size, n_timestep, vocab_size = pred.shape
             if true.ndim == 3:
@@ -153,8 +152,7 @@ class CrossEntropyLoss():
             self.true = true
             self.loss = cross_entropy_error(self.pred, self.true)
             
-
-            return self.loss
+        return self.loss
 
     def _backward(self):
         if self.cache is not None:
@@ -180,7 +178,7 @@ class CrossEntropyLoss():
             
         
         if self.scaling_factor != None:
-            dx = dx.astype(np.float16) * self.scaling_factor
+            dx = dx * self.scaling_factor
         
         return dx
 
