@@ -51,6 +51,128 @@ class BaseTrainer():
     def get_train_loss_list_iter(self):
         return self.valid_loss_list_iter
     
+    
+class EmbeddingTrainer(BaseTrainer):
+    def __init__(self, model, optimizer, n_epochs= 10, file_name= None):
+        """
+        Trainer for Classification
+
+        Parameters
+        ----------
+        model : model for classification task
+
+        critic : loss function class
+
+        optimizer : optimizer for model optimizing
+
+        n_epochs (int) : number of epochs. Default: 10
+
+        init_lr (int) : initial learning rate. Default: 0.01
+
+        """
+        super().__init__(n_epochs, file_name=file_name)
+        self.model = model
+        self.optimizer = optimizer
+        
+        self.train_accuracy_list = np.array([0])
+        self.valid_accuracy_list = np.array([0])
+        
+        
+    def _forward(self, x, y):
+        loss = self.model.forward(x, y)
+
+        return loss
+    
+    
+    def _backward(self):
+        self.model.backward()
+        
+    
+    def _update(self):
+        self.optimizer.update(self.model)
+    
+
+    def train(self, train_dataloader, max_grad = None):
+        """
+        Train model with train/valid data
+
+        Parameters
+        ----------
+        train_dataloader (iterable) : Train dataloader that can iterate with batch size in train dataset
+
+        valid_dataloader (iterable) : Valid dataloader that can iterate with batch size in valid dataset
+
+        """
+        for epoch in range(self.n_epochs):
+            start_time = time.time()
+            print(f"epoch {epoch+1}")
+            
+            tmp_train_loss = np.array([])
+            iter_tmp_train_loss = np.array([])
+            count = 0
+            iter_num = len(train_dataloader)
+            
+            for x, y in tqdm(train_dataloader):
+                count+=1
+                train_loss = self._forward(x, y)
+                self._backward()
+                if max_grad is not None:
+                    self.clip_grad(max_grad)
+                self._update()
+
+                tmp_train_loss = np.append(tmp_train_loss, train_loss)
+                iter_tmp_train_loss = np.append(iter_tmp_train_loss, train_loss)
+         
+                print(f"train loss : {train_loss:.6f}    iter : {count}/{iter_num}\r", end="")
+
+            epoch_train_loss = np.sum(tmp_train_loss) / len(tmp_train_loss)
+            self.train_loss_list = np.append(self.train_loss_list, epoch_train_loss)
+
+            print()
+            print(f"epoch {epoch+1} -- train loss : {epoch_train_loss}")
+            
+            finish_time = time.time()
+            epoch_time = finish_time - start_time
+            self.train_time = np.append(self.train_time, epoch_time)
+            print(f"{epoch_time:.1f}s elapsed")
+
+    
+    def clip_grad(self, max_norm):
+        total_norm = 0
+        param_grad_dict = self.optimizer.param_grad_dict
+        
+        for layer_name in self.model.sequence:
+            layer = self.model.network[layer_name]
+            
+            # only update differentiable layer
+            if layer.differentiable:
+                grad = layer.get_gradient()
+                param_list = list(layer.parameter.keys())
+                for param in param_list:
+                    total_norm += np.sum(grad[param_grad_dict[param]] ** 2)
+                
+        total_norm = np.sqrt(total_norm)
+        rate = max_norm / (total_norm + 1e-6)
+        
+        if rate < 1:
+            for layer_name in self.model.sequence:
+                layer = self.model.network[layer_name]
+
+                # only update differentiable layer
+                if layer.differentiable:
+                    grad = layer.get_gradient()
+                    param_list = list(layer.parameter.keys())
+                    for param in param_list:
+                        grad[param_grad_dict[param]] *= rate
+        
+        
+    def get_train_accuracy_list(self):
+        return self.train_accuracy_list
+    
+    
+    def get_valid_accuracy_list(self):
+        return self.valid_accuracy_list
+    
 
 class ClassificationTrainer(BaseTrainer):
     def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01, file_name= None):
@@ -717,28 +839,6 @@ class Seq2SeqTrainer(BaseTrainer):
             print()
             print(f"epoch {epoch+1} -- valid accuarcy : {epoch_valid_accuracy}")
             print("----------------------------------------------------------------")  
-            
-
-
-    # def _validate(self, valid_dataloader, epoch, show_iter_num = 1):
-    #     self.model.eval_state()
-    #     valid_correct_num = 0
-    #     dataset_len = valid_dataloader.dataset_len()
-    #     for x, y in tqdm(valid_dataloader):
-    #         valid_correct_num += self.eval_seq2seq(x, y)
-            
-    #         valid_temp_accuracy = valid_correct_num/dataset_len*100
-            
-    #         print(f"valid accuarcy : {valid_temp_accuracy:.6f}\r", end="")
-        
-    #     epoch_valid_accuracy = valid_correct_num/float(dataset_len) * 100
-    #     self.valid_accuracy_list = np.append(self.valid_accuracy_list, epoch_valid_accuracy)
-        
-    #     print()
-    #     print(f"epoch {epoch+1} -- valid accuarcy : {epoch_valid_accuracy}")
-    #     print("----------------------------------------------------------------")    
-
-    
 
     
     def clip_grad(self, max_norm):

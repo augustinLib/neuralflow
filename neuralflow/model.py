@@ -342,40 +342,89 @@ class Embedding(BaseLayer):
                 
         return None
 
+    
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """        
+        grad = OrderedDict()
+        grad["dw"] = self.dw.astype(np.float32)
+        
+        return grad
+        
 
     def _get_gradient(self):
         dw = self.dw.astype(np.float32)
 
         return dw
     
-# class EmbeddingDot(BaseLayer):
-#     def __init__(self, vocab_size: int, hidden_size: int, initialize = "He"):
-#         self.differentiable = True
-#         self.embed = Embedding(parameter, mixed_precision=False)
-#         self.cache = None
+    
+    
+class EmbeddingDot(BaseLayer):
+    def __init__(self, vocab_size, hidden_size, initialize = "He"):
+        super().__init__()
+        self.differentiable = True
+        self.cache = None
+        self.mixed_precision = False
+        
+        if initialize == "He":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
 
+        elif initialize == "Xavier":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
 
-#     def __call__(self, arg):
-#         result = self._forward(arg)
-#         return result
+        elif initialize == "None":
+            self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
 
-#     def _forward(self, h, idx):
-#         if self.mixed_precision == True and self.embed.mixed_precision != True:
-#             self.embed.mixed_precision = True
-#         target_W = self.embed._forward(idx)
-#         out = np.sum(target_W * h, axis=1)
-
-#         self.cache = (h, target_W)
-#         return out
-
-#     def _backward(self, dout):
-#         h, target_W = self.cache
-#         dout = dout.reshape(dout.shape[0], 1)
-
-#         dtarget_W = dout * h
-#         self.embed._backward(dtarget_W)
-#         dh = dout * target_W
+        elif isinstance(initialize, int):
+            self.parameter["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+        
+        else:
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
+        
+        self.embed = Embedding(self.parameter, mixed_precision = False)
+        
+        self.dw = None
+        
+    def __repr__(self) -> str:
+        return "EmbeddingDot"
+        
+        
+    def __call__(self, arg):
+        result = self._forward(arg)
+        return result
+    
+    
+    def _forward(self, h, index):
+        target_weight = self.embed._forward(index)
+        out = np.sum(target_weight * h, axis=1)
+        self.cache = (h, target_weight)
+        
+        return out
+    
+    def _backward(self, dout):
+        h, target_weight = self.cache
+        dout = dout.reshape(dout.shape[0], 1)
+        dtarget_W = dout * h
+        self.embed._backward(dtarget_W)
+        self.dw = self.embed._get_gradient()
+        dh = dout * target_weight
+        
         return dh
+    
+    
+    def get_gradient(self)->OrderedDict:
+        """Layer의 gradient를 return
+
+        Returns:
+            OrderedDict: Layer의 gradient
+        """        
+        grad = OrderedDict()
+        grad["dw"] = self.dw.astype(np.float32)
+        
+        return grad
 
 
 class EmbeddingLayer(BaseLayer):
@@ -1811,7 +1860,6 @@ class LayerNorm(BaseLayer):
         self.parameter["beta"] = np.zeros(self.input_shape).astype(np.float32)
 
         self.eps = eps
-        self.input_shape = None
         self.xc = None
         self.std = None
         self.dgamma = None
@@ -2013,11 +2061,20 @@ class Model(BaseModel):
                     shape = layer.num_features
                     string_list.append(f"{i}. {layer_name} : {layer} ({shape}) \n")
                     
+                elif repr(layer) =="LayerNormLayer":
+                    shape = layer.input_shape
+                    string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
+                    
                 else:
                     shape = layer.parameter["weight"].shape
                     string_list.append(f"{i}. {layer_name} : {layer} {shape} \n")
             else:
-                string_list.append(f"{i}. {layer_name} : {layer}\n")
+                if repr(layer) == "Dropout":
+                    shape = layer.dropout_ratio
+                    string_list.append(f"{i}. {layer_name} : {layer} ({shape}) \n")
+                    
+                else:
+                    string_list.append(f"{i}. {layer_name} : {layer}\n")
 
         structure = structure.join(string_list)
         return structure

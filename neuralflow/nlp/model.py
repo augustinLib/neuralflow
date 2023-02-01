@@ -6,48 +6,201 @@ from neuralflow.function_class import *
 from neuralflow.model import *
 
 
+class NegativeSamplingLoss(Model):
+    def __init__(self, corpus, vocab_size, hidden_size, power=0.75, sample_size=5, initialize = "He"):
+        self.sample_size = sample_size
+        self.sampler = NegativeSampler(corpus, power, sample_size)
+        self.loss_layers = tuple([BinaryCrossEntropyLoss() for _ in range(sample_size + 1)])
+        self.embed_dot_layers = tuple([EmbeddingDot(vocab_size, hidden_size) for _ in range(sample_size + 1)])
+        self.layers = self.loss_layers + self.embed_dot_layers + (self.sampler,)
+        
+        self.network = OrderedDict()
+        self.count_dict = OrderedDict()
+        self.sequence = []
+        temp_repr_list = []
+        
+        for layer in self.layers:
+            temp_repr_list.append(repr(layer))
+        repr_set = set(temp_repr_list)
+
+        #initialize count_dict
+        for rep in repr_set:
+            self.count_dict[rep] = 1     
+
+        for layer in self.layers:
+            self.network[f"{repr(layer)}{self.count_dict[repr(layer)]}"] = layer
+            self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
+            self.count_dict[repr(layer)] += 1
 
 
-# class NegativeSamplingLoss(Model):
-#     def __init__(self, corpus, power=0.75, sample_size=5):
-#         super().__init__()
-#         self.sample_size = sample_size
-#         self.sampler = Sampler(corpus, power, sample_size)
-#         for i in range(sample_size+1):
-#             self.add    
-#         self.loss_layers = [BinaryCrossEntropyLoss() for _ in range(sample_size + 1)]
-#         self.embed_dot_layers = [EmbeddingLayer(vocab_size, hidden_size) for _ in range(sample_size + 1)]
+    def forward(self, h, target):
+        batch_size = target.shape[0]
+        # 자주 등장하는 단어 더 추출하기
+        # negative_sample = (batch_size, sample_size)
+        negative_sample = self.sampler.negative_sampling(target)
 
-#         self.params, self.grads = [], []
-#         for layer in self.embed_dot_layers:
-#             self.params += layer.params
-#             self.grads += layer.grads
+        score = self.embed_dot_layers[0]._forward(h, target)
+        # 정답 : 1
+        correct_label = np.ones(batch_size, dtype=np.int32)
+        loss = self.loss_layers[0]._forward(score, correct_label)
+        
+        # 오답 : 0
+        negative_label = np.zeros(batch_size, dtype=np.int32)
+        
+        # sample_size = 몇개 sampling할건지
+        for i in range(self.sample_size):
+            negative_target = negative_sample[:, i]
+            score = self.embed_dot_layers[1 + i]._forward(h, negative_target)
+            loss += self.loss_layers[1 + i]._forward(score, negative_label)
 
-#     def forward(self, h, target):
-#         batch_size = target.shape[0]
-#         negative_sample = self.sampler.get_negative_sample(target)
+        return loss
+    
 
-#         # 긍정적 예 순전파
-#         score = self.embed_dot_layers[0].forward(h, target)
-#         correct_label = np.ones(batch_size, dtype=np.int32)
-#         loss = self.loss_layers[0].forward(score, correct_label)
+    def backward(self, dout=1):
+        dh = 0
+        for loss_layer, emb_layer in zip(self.loss_layers, self.embed_dot_layers):
+            dscore = loss_layer._backward(dout)
+            dh += emb_layer._backward(dscore)
 
-#         # 부정적 예 순전파
-#         negative_label = np.zeros(batch_size, dtype=np.int32)
-#         for i in range(self.sample_size):
-#             negative_target = negative_sample[:, i]
-#             score = self.embed_dot_layers[1 + i].forward(h, negative_target)
-#             loss += self.loss_layers[1 + i].forward(score, negative_label)
+        return dh
+    
 
-#         return loss
+class Cbow(Model):
+    def __init__(self, corpus, vocab_size, hidden_size, window_size, sample_size = 5, initialize = "He"):
+        self.network = OrderedDict()
+        self.sequence = []
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.parameter = OrderedDict()
+        if initialize == "He":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
 
-#     def backward(self, dout=1):
-#         dh = 0
-#         for l0, l1 in zip(self.loss_layers, self.embed_dot_layers):
-#             dscore = l0.backward(dout)
-#             dh += l1.backward(dscore)
+        elif initialize == "Xavier":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
 
-#         return dh
+        elif initialize == "None":
+            self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+
+        elif isinstance(initialize, int):
+            self.parameter["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+        
+        else:
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
+        
+        self.layers = ()
+        self.input_layers = ()
+        for i in range(window_size*2):
+            self.input_layers += (Embedding(self.parameter),)
+            
+        self.loss = NegativeSamplingLoss(corpus, vocab_size, hidden_size, sample_size=sample_size)
+        self.layers += self.input_layers
+        self.layers += self.loss.layers
+        
+        self.count_dict = OrderedDict()
+        temp_repr_list = []
+
+        for layer in self.layers:
+            temp_repr_list.append(repr(layer))
+        repr_set = set(temp_repr_list)
+
+        #initialize count_dict
+        for rep in repr_set:
+            self.count_dict[rep] = 1
+
+        for layer in self.layers:
+            self.network[f"{repr(layer)}{self.count_dict[repr(layer)]}"] = layer
+            self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
+            self.count_dict[repr(layer)] += 1
+
+        
+        self.word_vector = self.parameter["weight"]
+        
+        
+    def forward(self, context, target):
+        h = 0
+        for i, layer in enumerate(self.input_layers):
+            h += layer._forward(context[:, i])
+            
+        h *= 1 / len(self.input_layers)
+        loss = self.loss.forward(h, target)
+        return loss
+    
+    
+    def backward(self, dout=1):
+        dout = self.loss.backward(dout)
+        dout *= 1 / len(self.input_layers)
+        for layer in self.input_layers:
+            layer._backward(dout)
+
+        
+class SkipGram(Model):
+    def __init__(self, corpus, vocab_size, hidden_size, window_size, sample_size = 5, initialize = "He"):
+        self.network = OrderedDict()
+        self.sequence = []
+        self.vocab_size = vocab_size
+        self.hidden_size = hidden_size
+        self.parameter = OrderedDict()
+        if initialize == "He":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
+
+        elif initialize == "Xavier":
+            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
+
+        elif initialize == "None":
+            self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+
+        elif isinstance(initialize, int):
+            self.parameter["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32)
+        
+        else:
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
+        
+        self.layers = ()
+        self.input_layer = Embedding(self.parameter)
+        self.layers += (self.input_layer,)
+        
+        self.loss = ()
+        for i in range(window_size*2):
+            self.loss += (NegativeSamplingLoss(corpus, vocab_size, hidden_size, sample_size=sample_size),)
+            
+        for loss in self.loss:
+            self.layers += loss.layers
+        
+        self.count_dict = OrderedDict()
+        temp_repr_list = []
+
+        for layer in self.layers:
+            temp_repr_list.append(repr(layer))
+        repr_set = set(temp_repr_list)
+
+        #initialize count_dict
+        for rep in repr_set:
+            self.count_dict[rep] = 1
+
+        for layer in self.layers:
+            self.network[f"{repr(layer)}{self.count_dict[repr(layer)]}"] = layer
+            self.sequence.append(f"{repr(layer)}{self.count_dict[repr(layer)]}")
+            self.count_dict[repr(layer)] += 1
+            
+        self.word_vector = self.parameter["weight"]
+        
+        
+    def forward(self, context, target):
+        h = self.input_layer._forward(target)
+
+        loss = 0
+        for i, layer in enumerate(self.loss):
+            loss += layer.forward(h, context[:, i])
+        return loss
+    
+    
+    def backward(self, dout=1):
+        dh = 0
+        for i, layer in enumerate(self.loss):
+            dh += layer.backward(dout)
+        self.input_layer._backward(dh)
+        
+        return None
 
 
 class LanguageModel(Model):
@@ -164,11 +317,8 @@ class Decoder(Model):
         if self.peeky:
             batch_size, n_timestep = x.shape
             
-            for layer_name in self.sequence:
-                layer = self.network[layer_name]
-                if repr(layer) == "LSTMLayer" or repr(layer) == "RNNLayer":
-                    layer.load_state(h)
-                    break
+            layer = self.network["LSTMLayer1"]
+            layer.load_state(h)
             
             first_emb_name = self.sequence[0]
             first_emb = self.network[first_emb_name]
@@ -188,11 +338,8 @@ class Decoder(Model):
             result = final_dense(result)
                     
         else:
-            for layer_name in self.sequence:
-                layer = self.network[layer_name]
-                if repr(layer) == "LSTMLayer" or repr(layer) == "RNNLayer":
-                    layer.load_state(h)
-                    break
+            layer = self.network["LSTMLayer1"]
+            layer.load_state(h)
                 
             input = x
 
@@ -224,13 +371,8 @@ class Decoder(Model):
             first_emb._backward(dembed)
             dhs = dhs0 + dhs1
             
-            first_lstm_dh = None
-            for layer_name in self.sequence:
-                layer = self.network[layer_name]
-                if repr(layer) == "LSTMLayer" or repr(layer) == "RNNLayer":
-                    first_lstm_dh = layer.dh
-                    break
-                
+
+            first_lstm_dh = self.network["LSTMLayer1"].dh
             dh = first_lstm_dh + np.sum(dhs, axis=1)
                         
         else:
@@ -243,11 +385,7 @@ class Decoder(Model):
                 result = layer._backward(result)
 
             dh = 0
-            for layer_name in self.sequence:
-                layer = self.network[layer_name]
-                if repr(layer) == "LSTMLayer" or repr(layer) == "RNNLayer":
-                    dh = layer.dh
-                    break
+            dh = self.network["LSTMLayer1"].dh
                 
         if self.tying_weight:
             self.tying_backward()
@@ -258,11 +396,8 @@ class Decoder(Model):
     def generate(self, h, start_id, sample_size):
         sampled_result = []
         sample_id = start_id
-        for layer_name in self.sequence:
-            layer = self.network[layer_name]
-            if repr(layer) == "LSTMLayer" or repr(layer) == "RNNLayer":
-                layer.load_state(h)
-                break
+        layer = self.network["LSTMLayer1"]
+        layer.load_state(h)
             
         if self.peeky:
             peeky_h = h.reshape(1,1,self.hidden_size)
@@ -560,10 +695,7 @@ class AttentionEncoder(Model):
         for layer_name in reversed(self.sequence):
             layer = self.network[layer_name]
             result = layer._backward(result)
-        
-        if self.tying_weight:
-            self.tying_backward()
-            
+
         return result
             
     
@@ -578,13 +710,17 @@ class AttentionDecoder(Model):
                     self.add_layer(Dropout(dropout_ratio=dropout))
                     
             self.add_layer(AttentionLayer())
-            self.add_layer(DenseLayer(hidden_size*2, vocab_size))
+            self.add_layer(DenseLayer(hidden_size*2, hidden_size))
+            self.add_layer(DenseLayer(hidden_size, vocab_size))
         
         
     def _forward(self, x, encoder_hidden_state):
+        if self.tying_weight:
+            self.tying_forward()    
+    
         h = encoder_hidden_state[:,-1]
         layer = self.network["LSTMLayer1"]
-        layer.load_state(deepcopy(h))
+        layer.load_state(h)
 
         if self.tying_weight:
             self.tying_forward()
@@ -592,7 +728,7 @@ class AttentionDecoder(Model):
         input = x
             
         # LSTM까지만 진행
-        for layer_name in self.sequence[:-2]:
+        for layer_name in self.sequence[:-3]:
             layer = self.network[layer_name]
             y = layer._forward(input)
             input = y
@@ -602,9 +738,12 @@ class AttentionDecoder(Model):
         attention = self.network["AttentionLayer1"]
         context = attention._forward(encoder_hidden_state, decoder_hidden_state)
         
-        final_dense = self.network["DenseLayer1"]
+        concat_dense = self.network["DenseLayer1"]
+        final_dense = self.network["DenseLayer2"]
         
         result = np.concatenate((context, decoder_hidden_state), axis=2).astype(np.float32)
+        result = concat_dense._forward(result)
+        
         result = final_dense._forward(result)
         
         return result
@@ -612,8 +751,10 @@ class AttentionDecoder(Model):
     
     def _backward(self, dout):
         # dense layer
-        final_dense = self.network["DenseLayer1"]
+        concat_dense = self.network["DenseLayer1"]
+        final_dense = self.network["DenseLayer2"]
         dout = final_dense._backward(dout)
+        dout = concat_dense._backward(dout)
         
         batch_size, n_timestep, hidden_size_double = dout.shape
         hidden_size = hidden_size_double // 2
@@ -622,18 +763,22 @@ class AttentionDecoder(Model):
         attention = self.network["AttentionLayer1"]
         
         dcontext, ddecoder_hidden_state_0 = dout[:,:,:hidden_size], dout[:,:,hidden_size:]
+            
         dencoder_hidden_state, ddecoder_hidden_state_1 = attention._backward(dcontext)
         ddecoder_hidden_state = ddecoder_hidden_state_0 + ddecoder_hidden_state_1
         
         # lstm부터 끝(embedding)까지
         dout = ddecoder_hidden_state
-        for layer_name in reversed(self.sequence[:-2]):
+        for layer_name in reversed(self.sequence[:-3]):
             layer = self.network[layer_name]
             dout = layer._backward(dout)  
         
         # 이후 encoder로 전달받은 gradient 합산해서 전달
         first_lstm_dh = self.network["LSTMLayer1"].dh
         dencoder_hidden_state[:, -1] += first_lstm_dh
+        
+        if self.tying_weight:
+            self.tying_backward()
 
         return dencoder_hidden_state
                 
@@ -651,7 +796,7 @@ class AttentionDecoder(Model):
         for _ in range(sample_size):
             input = np.array([sample_id]).reshape((1, 1))
             # LSTM까지만 진행
-            for layer_name in self.sequence[:-2]:
+            for layer_name in self.sequence[:-3]:
                 layer = self.network[layer_name]
                 y = layer._forward(input)
                 input = y
@@ -661,9 +806,12 @@ class AttentionDecoder(Model):
             attention = self.network["AttentionLayer1"]
             context = attention._forward(encoder_hidden_state, decoder_hidden_state)
 
-            final_dense = self.network["DenseLayer1"]
+            concat_dense = self.network["DenseLayer1"]
+            final_dense = self.network["DenseLayer2"]
 
             result = np.concatenate((context, decoder_hidden_state), axis=2).astype(np.float32)
+            result = concat_dense._forward(result)
+
             result = final_dense._forward(result)
 
             sample_id = np.argmax(result.flatten())
@@ -673,7 +821,7 @@ class AttentionDecoder(Model):
     
     
 class AttentionSeq2Seq(Model):
-    def __init__(self, vocab_size=1000, word_vec_size=128, hidden_size=128, n_layers=1, dropout = None):
+    def __init__(self, vocab_size=1000, word_vec_size=128, hidden_size=128, n_layers=1, concat = True, dropout = None):
         super().__init__(())
         self.encoder = AttentionEncoder(vocab_size=vocab_size,
                                word_vec_size=word_vec_size,
@@ -681,12 +829,18 @@ class AttentionSeq2Seq(Model):
                                n_layers=n_layers,
                                dropout=dropout)
         
-
-        self.decoder = AttentionDecoder(vocab_size=vocab_size,
-                                word_vec_size=word_vec_size,
-                                hidden_size=hidden_size,
-                                n_layers=n_layers,
-                                dropout=dropout)
+        if concat:
+            self.decoder = AttentionDecoder(vocab_size=vocab_size,
+                                    word_vec_size=word_vec_size,
+                                    hidden_size=hidden_size,
+                                    n_layers=n_layers,
+                                    dropout=dropout)
+        else:
+            self.decoder = AttentionDecoderBackup(vocab_size=vocab_size,
+                                    word_vec_size=word_vec_size,
+                                    hidden_size=hidden_size,
+                                    n_layers=n_layers,
+                                    dropout=dropout)
 
         self.network = OrderedDict()
         self.count_dict = OrderedDict()
@@ -737,3 +891,130 @@ class AttentionSeq2Seq(Model):
                                         sample_size=sample_size)
         
         return sampled
+    
+    
+    def weight_tying(self):
+        self.decoder.weight_tying()
+
+
+class AttentionDecoderBackup(Model):
+    def __init__(self, vocab_size=1000, word_vec_size=128, hidden_size=128, n_layers=1, dropout = None, *layers):
+        super().__init__(*layers)
+        if len(layers) == 0:
+            self.add_layer(EmbeddingLayer(vocab_size=vocab_size, hidden_size=word_vec_size, initialize=100))
+            for i in range(n_layers):
+                self.add_layer(LSTMLayer(word_vec_size, hidden_size))
+                if dropout != None:
+                    self.add_layer(Dropout(dropout_ratio=dropout))
+                    
+            self.add_layer(AttentionLayer())
+            self.add_layer(DenseLayer(hidden_size*2, vocab_size))
+        
+        
+    def _forward(self, x, encoder_hidden_state):
+        if self.tying_weight:
+            self.tying_forward()    
+    
+        h = encoder_hidden_state[:,-1]
+        layer = self.network["LSTMLayer1"]
+        layer.load_state(deepcopy(h))
+
+        if self.tying_weight:
+            self.tying_forward()
+            
+        input = x
+            
+        # LSTM까지만 진행
+        for layer_name in self.sequence[:-2]:
+            layer = self.network[layer_name]
+            y = layer._forward(input)
+            input = y
+
+        decoder_hidden_state = input
+        
+        attention = self.network["AttentionLayer1"]
+        context = attention._forward(encoder_hidden_state, decoder_hidden_state)
+        
+        final_dense = self.network["DenseLayer1"]
+        
+        if self.tying_weight:
+            result = (context + decoder_hidden_state) / 2
+        
+        result = np.concatenate((context, decoder_hidden_state), axis=2).astype(np.float32)
+        result = final_dense._forward(result)
+        
+        return result
+    
+    
+    def _backward(self, dout):
+        # dense layer
+        final_dense = self.network["DenseLayer1"]
+        dout = final_dense._backward(dout)
+        
+        if self.tying_weight:
+            batch_size, n_timestep, hidden_size = dout.shape
+        
+        else:
+            batch_size, n_timestep, hidden_size_double = dout.shape
+            hidden_size = hidden_size_double // 2
+        
+        # attention layer
+        attention = self.network["AttentionLayer1"]
+        
+        if self.tying_weight:
+            dcontext = dout / 2
+            ddecoder_hidden_state_0 = dout / 2
+        else:
+            dcontext, ddecoder_hidden_state_0 = dout[:,:,:hidden_size], dout[:,:,hidden_size:]
+            
+        dencoder_hidden_state, ddecoder_hidden_state_1 = attention._backward(dcontext)
+        ddecoder_hidden_state = ddecoder_hidden_state_0 + ddecoder_hidden_state_1
+        
+        # lstm부터 끝(embedding)까지
+        dout = ddecoder_hidden_state
+        for layer_name in reversed(self.sequence[:-2]):
+            layer = self.network[layer_name]
+            dout = layer._backward(dout)  
+        
+        # 이후 encoder로 전달받은 gradient 합산해서 전달
+        first_lstm_dh = self.network["LSTMLayer1"].dh
+        dencoder_hidden_state[:, -1] += first_lstm_dh
+        
+        if self.tying_weight:
+            self.tying_backward()
+
+        return dencoder_hidden_state
+                
+
+    def generate(self, encoder_hidden_state, start_id, sample_size):
+        sampled_result = []
+        sample_id = start_id
+        h = encoder_hidden_state[:,-1]
+        layer = self.network["LSTMLayer1"]
+        layer.load_state(deepcopy(h))
+            
+        if self.tying_weight:
+            self.tying_forward()
+            
+        for _ in range(sample_size):
+            input = np.array([sample_id]).reshape((1, 1))
+            # LSTM까지만 진행
+            for layer_name in self.sequence[:-2]:
+                layer = self.network[layer_name]
+                y = layer._forward(input)
+                input = y
+
+            decoder_hidden_state = input
+
+            attention = self.network["AttentionLayer1"]
+            context = attention._forward(encoder_hidden_state, decoder_hidden_state)
+
+            final_dense = self.network["DenseLayer1"]
+
+            result = np.concatenate((context, decoder_hidden_state), axis=2).astype(np.float32)
+            result = final_dense._forward(result)
+
+            sample_id = np.argmax(result.flatten())
+            sampled_result.append(sample_id)
+        
+        return sampled_result

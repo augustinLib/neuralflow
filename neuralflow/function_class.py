@@ -9,6 +9,7 @@ class BaseFunction():
         self.differentiable = False
         self.changeability = False
         self.mixed_precision = False
+        self.tied = False
 
 
     def __call__(self, arg):
@@ -194,8 +195,9 @@ class CrossEntropyLoss():
             return dx
 
 
-class BinaryCrossEntropyLoss():
+class BinaryCrossEntropyLoss(BaseFunction):
     def __init__(self, loss_scaling = None):
+        super().__init__()
         self.loss = None
         self.pred = None
         self.true = None
@@ -216,20 +218,21 @@ class BinaryCrossEntropyLoss():
 
         return self.loss
 
-    def _backward(self):
+    def _backward(self, dout = 1):
         batch_size = self.true.shape[0]
-        if self.true.size == self.pred.size:
-            dx = (self.pred - self.true) / batch_size
-        else:
-            dx = self.pred.copy()
-            dx[np.arange(batch_size), self.true] -= 1
-            dx = dx / batch_size
 
+        dx = (self.pred - self.true) * dout / batch_size
+        
         return dx
 
 
-class Sampler():
-    def __init__(self, corpus, power = 0.75, sample_size = 2 ):
+
+class NegativeSampler(BaseFunction):
+    def __init__(self, corpus, power = 0.75, sample_size = 2):
+        super().__init__()
+        # power가 0에 가까울수록 출현 빈도 낮은 sample들이 많이 뽑히게 됨
+        
+        # 몇 개 추출할 것인지
         self.sample_size = sample_size
         self.vocab_size = None
         self.word_p = None
@@ -248,6 +251,11 @@ class Sampler():
         self.word_p = np.power(self.word_p, power)
         self.word_p /= np.sum(self.word_p)
 
+
+    def __repr__(self) -> str:
+        return "Sampler"
+    
+    
     def negative_sampling(self, target):
         batch_size = target.shape[0]
 
@@ -261,8 +269,7 @@ class Sampler():
                 p /= p.sum()
                 negative_sample[i, :] = np.random.choice(self.vocab_size, size=self.sample_size, replace=False, p=p)
         else:
-            negative_sample = np.random.choice(self.vocab_size, size=(batch_size, self.sample_size),
-                                               replace=True, p=self.word_p)
+            negative_sample = np.random.choice(self.vocab_size, size=(batch_size, self.sample_size), replace=True, p=self.word_p)
 
         return negative_sample
 
