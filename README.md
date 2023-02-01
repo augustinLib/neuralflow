@@ -36,6 +36,21 @@ conv_model = Model(
     ReLU(),
     DenseLayer(100, 10)
 )
+
+model_ln = Model(
+    EmbeddingLayer(vocab_size, wordvec_size),
+    Dropout(dropout),
+    LSTMLayer(wordvec_size, hidden_size),
+    Dropout(dropout),
+    LSTMLayer(hidden_size, hidden_size),
+    Dropout(dropout),
+    DenseLayer(hidden_size, vocab_size)
+)
+# mixed precision
+model_ln.mixed_precision_on()
+
+# weight tying
+model_ln.weight_tying()
 ```
 and the training proceeds as follows.
 ```python
@@ -87,6 +102,9 @@ config.GPU = False
     - nlp
       - \_\_init\_\_.py
       - utils.py
+      - model.py
+    - cv
+      - \_\_init\_\_.py
       - model.py
     - epoch_notice
       - send_message.py
