@@ -655,7 +655,7 @@ class Seq2SeqTrainer(BaseTrainer):
         self.optimizer.update(self.model)
     
 
-    def train(self, train_dataloader, valid_dataloader = None, max_grad = None, show_iter_num=1, verbose = 10):
+    def train(self, train_dataloader, valid_x, valid_y, max_grad = None, show_iter_num=1, verbose = 10):
         """
         Train model with train/valid data
 
@@ -702,89 +702,44 @@ class Seq2SeqTrainer(BaseTrainer):
             epoch_time = finish_time - start_time
             self.train_time = np.append(self.train_time, epoch_time)
             print(f"{epoch_time:.1f}s elapsed")
-            if valid_dataloader is not None:
-                self._validate(valid_dataloader, epoch, show_iter_num=show_iter_num)
-            else:
-                print("----------------------------------------------------------------")    
-
-
-    def _validate(self, valid_dataloader, epoch, show_iter_num = 1):
-        self.model.eval_state()
-        tmp_valid_loss = np.array([])
-        iter_tmp_valid_loss = np.array([])
-        count = 0
-        valid_correct_num = 0
-        y_num = 0
-        dataset_len = valid_dataloader.dataset_len()
-        for x, y in tqdm(valid_dataloader):
-            valid_correct_num += self.eval_seq2seq(x, y)
             
-            valid_temp_accuracy = valid_correct_num/dataset_len*100
+            self.model.eval_state()
+            correct_num = 0
+            for i in range(len(valid_x)):
+                question, correct = valid_x[[i]], valid_y[[i]]
+                correct_num += self.eval_seq2seq(question, correct)
+                
+                print(f"valid accuarcy : {correct_num/len(valid_x):.6f}\r", end="")
+        
+            epoch_valid_accuracy = (correct_num/float(len(valid_x))) * 100
+            self.valid_accuracy_list = np.append(self.valid_accuracy_list, epoch_valid_accuracy)
+        
+            print()
+            print(f"epoch {epoch+1} -- valid accuarcy : {epoch_valid_accuracy}")
+            print("----------------------------------------------------------------")  
             
-            print(f"valid accuarcy : {valid_temp_accuracy:.6f}\r", end="")
-        
-        epoch_valid_accuracy = valid_correct_num/float(dataset_len) * 100
-        self.valid_accuracy_list = np.append(self.valid_accuracy_list, epoch_valid_accuracy)
-        
-        print()
-        print(f"epoch {epoch+1} -- valid accuarcy : {epoch_valid_accuracy}")
-        print("----------------------------------------------------------------")    
 
-        
-    def show_error_graph(self, show_iter = False, valid = False):
-        """
-        Visualize training/validation error
-        """
-        if show_iter:
+
+    # def _validate(self, valid_dataloader, epoch, show_iter_num = 1):
+    #     self.model.eval_state()
+    #     valid_correct_num = 0
+    #     dataset_len = valid_dataloader.dataset_len()
+    #     for x, y in tqdm(valid_dataloader):
+    #         valid_correct_num += self.eval_seq2seq(x, y)
             
-            if valid:
-                plt.plot(to_cpu(self.valid_loss_list_iter), "-b" ,label = 'valid loss')
-                plt.title("train/valid loss per iteration")
-            else:
-                plt.title("train loss per iteration")
-
-            plt.plot(to_cpu(self.train_loss_list_iter), "-r" ,label = 'train loss')
-            plt.legend(loc="upper right")
-            plt.grid()
-            plt.show()
-
-        else:
-            if valid:
-                plt.plot(to_cpu(self.valid_loss_list), "-b" ,label = 'valid loss')
-                plt.title("train/valid loss per epoch")
-            else:
-                plt.title("train loss per epoch")
-
-            plt.plot(to_cpu(self.train_loss_list), "-r" ,label = 'train loss')
-
-            plt.legend(loc="upper right")
-
-            plt.grid()
-            plt.show()
-
-
-    def show_accuracy_graph(self, valid = False):
-        """
-        Visualize training/validation accuracy
-        """
-        if valid:
-            plt.plot(to_cpu(self.valid_accuracy_list), "-b" ,label = 'valid accuracy')
-            plt.title("train/valid accuracy per epoch")
-        else:
-            plt.title("train accuracy per epoch")
+    #         valid_temp_accuracy = valid_correct_num/dataset_len*100
             
-        plt.plot(to_cpu(self.train_accuracy_list), "-r" ,label = 'train accuracy')
-
-        plt.legend(loc="lower right")
-
-        plt.grid()
-        plt.show()
-
-
-    def add_metric(self, **metric):
-        print(f"metic {metric.keys()} added")
-        self.metric = dict(self.metric, metric)
+    #         print(f"valid accuarcy : {valid_temp_accuracy:.6f}\r", end="")
         
+    #     epoch_valid_accuracy = valid_correct_num/float(dataset_len) * 100
+    #     self.valid_accuracy_list = np.append(self.valid_accuracy_list, epoch_valid_accuracy)
+        
+    #     print()
+    #     print(f"epoch {epoch+1} -- valid accuarcy : {epoch_valid_accuracy}")
+    #     print("----------------------------------------------------------------")    
+
+    
+
     
     def clip_grad(self, max_norm):
         total_norm = 0
@@ -826,7 +781,7 @@ class Seq2SeqTrainer(BaseTrainer):
         tgt = ''.join([self.vocab[int(c)] for c in tgt])
         pred = ''.join([self.vocab[int(c)] for c in pred])
 
-        if self.verbose != 0:
+        if self.verbose > 0:
             if self.is_reverse:
                 src = src[::-1]
 

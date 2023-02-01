@@ -104,9 +104,13 @@ class DenseLayer(BaseLayer):
         elif initialize == "None":
             self.parameter["weight"] = 0.01 * np.random.randn(input_size, output_size).astype(np.float32)
             self.parameter["bias"] = np.zeros(output_size).astype(np.float32)
+            
+        elif isinstance(initialize, int):
+            self.parameter["weight"] = np.random.randn(input_size, output_size).astype(np.float32) * np.sqrt(1/initialize)
+            self.parameter["bias"] = np.zeros(output_size).astype(np.float32)
 
         else:
-            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None'")
+            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
 
 
         self.dw = np.zeros_like(self.parameter["weight"])
@@ -343,6 +347,35 @@ class Embedding(BaseLayer):
         dw = self.dw.astype(np.float32)
 
         return dw
+    
+# class EmbeddingDot(BaseLayer):
+#     def __init__(self, vocab_size: int, hidden_size: int, initialize = "He"):
+#         self.differentiable = True
+#         self.embed = Embedding(parameter, mixed_precision=False)
+#         self.cache = None
+
+
+#     def __call__(self, arg):
+#         result = self._forward(arg)
+#         return result
+
+#     def _forward(self, h, idx):
+#         if self.mixed_precision == True and self.embed.mixed_precision != True:
+#             self.embed.mixed_precision = True
+#         target_W = self.embed._forward(idx)
+#         out = np.sum(target_W * h, axis=1)
+
+#         self.cache = (h, target_W)
+#         return out
+
+#     def _backward(self, dout):
+#         h, target_W = self.cache
+#         dout = dout.reshape(dout.shape[0], 1)
+
+#         dtarget_W = dout * h
+#         self.embed._backward(dtarget_W)
+#         dh = dout * target_W
+        return dh
 
 
 class EmbeddingLayer(BaseLayer):

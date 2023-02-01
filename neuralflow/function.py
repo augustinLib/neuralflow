@@ -21,13 +21,14 @@ def identity(x):
 
 def softmax(x):
     if x.ndim == 2:
-        x = x.T
-        x = x - np.max(x, axis=0)
-        y = np.exp(x) / np.sum(np.exp(x), axis=0)
-        return y.T 
+        x = x - x.max(axis=1, keepdims=True)
+        x = np.exp(x)
+        x /= x.sum(axis=1, keepdims=True)
+    elif x.ndim == 1:
+        x = x - np.max(x)
+        x = np.exp(x) / np.sum(np.exp(x))
 
-    x = x - np.max(x)
-    return np.exp(x) / np.sum(np.exp(x))
+    return x
     
 
 def show_function(func, is_relu = False):
