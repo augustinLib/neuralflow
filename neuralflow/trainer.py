@@ -435,7 +435,7 @@ class ClassificationTrainer(BaseTrainer):
     
         
 class LanguageModelTrainer(BaseTrainer):
-    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01, file_name= None):
+    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=None, file_name= None):
         """
         Trainer for Language modeling
 
@@ -460,6 +460,8 @@ class LanguageModelTrainer(BaseTrainer):
         self.valid_perplexity_list_iter = np.array([])
         self.train_perplexity_list = np.array([])
         self.valid_perplexity_list = np.array([])
+        self.best_ppl = float('inf')
+        self.init_lr = init_lr
 
 
     def _forward(self, x, y):
@@ -584,9 +586,13 @@ class LanguageModelTrainer(BaseTrainer):
         self.valid_perplexity_list = np.append(self.valid_perplexity_list, epoch_valid_perplexity)
         self.model.reset_rnn_state()
 
-        if epoch_valid_loss < self.best_valid_loss and self.file_name != None:
+        if (epoch_valid_perplexity < self.best_ppl) and self.file_name != None:
             self.model.save_params(self.file_name)
-            self.best_valid_loss = epoch_valid_loss        
+            self.best_ppl = epoch_valid_perplexity
+            
+            if self.init_lr != None:
+                self.init_lr /= 4.0
+                self.optimizer.lr = self.init_lr
 
         print()
         print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss:.6f}    valid perplexity : {epoch_valid_perplexity:.6f}")

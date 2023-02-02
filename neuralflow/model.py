@@ -363,28 +363,15 @@ class Embedding(BaseLayer):
     
     
 class EmbeddingDot(BaseLayer):
-    def __init__(self, vocab_size, hidden_size, initialize = "He"):
+    def __init__(self, parameter):
         super().__init__()
         self.differentiable = True
         self.cache = None
         self.mixed_precision = False
+        self.parameter = parameter
         
-        if initialize == "He":
-            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
-
-        elif initialize == "Xavier":
-            self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
-
-        elif initialize == "None":
-            self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
-
-        elif isinstance(initialize, int):
-            self.parameter["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32)
         
-        else:
-            raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
-        
-        self.embed = Embedding(self.parameter, mixed_precision = False)
+        self.embed = Embedding(parameter, mixed_precision = False)
         
         self.dw = None
         

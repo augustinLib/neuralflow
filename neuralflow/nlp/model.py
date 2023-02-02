@@ -7,11 +7,11 @@ from neuralflow.model import *
 
 
 class NegativeSamplingLoss(Model):
-    def __init__(self, corpus, vocab_size, hidden_size, power=0.75, sample_size=5, initialize = "He"):
+    def __init__(self, corpus, weight, power=0.75, sample_size=5, initialize = "He"):
         self.sample_size = sample_size
         self.sampler = NegativeSampler(corpus, power, sample_size)
         self.loss_layers = tuple([BinaryCrossEntropyLoss() for _ in range(sample_size + 1)])
-        self.embed_dot_layers = tuple([EmbeddingDot(vocab_size, hidden_size) for _ in range(sample_size + 1)])
+        self.embed_dot_layers = tuple([EmbeddingDot(weight) for _ in range(sample_size + 1)])
         self.layers = self.loss_layers + self.embed_dot_layers + (self.sampler,)
         
         self.network = OrderedDict()
@@ -72,18 +72,23 @@ class Cbow(Model):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.parameter = OrderedDict()
+        self.parameter_out = OrderedDict()
+        
         if initialize == "He":
             self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
+            self.parameter_out["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
 
         elif initialize == "Xavier":
             self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
-
+            self.parameter_out["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(1 / vocab_size))
+            
         elif initialize == "None":
             self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
-
+            self.parameter_out["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32) 
+            
         elif isinstance(initialize, int):
             self.parameter["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32)
-        
+            self.parameter_out["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32) 
         else:
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
         
@@ -92,7 +97,7 @@ class Cbow(Model):
         for i in range(window_size*2):
             self.input_layers += (Embedding(self.parameter),)
             
-        self.loss = NegativeSamplingLoss(corpus, vocab_size, hidden_size, sample_size=sample_size)
+        self.loss = NegativeSamplingLoss(corpus, self.parameter_out, sample_size=sample_size)
         self.layers += self.input_layers
         self.layers += self.loss.layers
         
@@ -140,18 +145,23 @@ class SkipGram(Model):
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.parameter = OrderedDict()
+        self.parameter_out = OrderedDict()
+        
         if initialize == "He":
             self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
+            self.parameter_out["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(2 / vocab_size))
 
         elif initialize == "Xavier":
             self.parameter["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * np.sqrt(1/vocab_size)
-
+            self.parameter_out["weight"] = np.random.randn(vocab_size, hidden_size).astype(np.float32) * (np.sqrt(1 / vocab_size))
+            
         elif initialize == "None":
             self.parameter["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32)
-
+            self.parameter_out["weight"] = 0.01 * np.random.randn(vocab_size, hidden_size).astype(np.float32) 
+            
         elif isinstance(initialize, int):
             self.parameter["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32)
-        
+            self.parameter_out["weight"] = (1/initialize) * np.random.randn(vocab_size, hidden_size).astype(np.float32) 
         else:
             raise ValueError("'initialize' must be 'He' or 'Xavier' or 'None' or integer")
         
@@ -161,7 +171,7 @@ class SkipGram(Model):
         
         self.loss = ()
         for i in range(window_size*2):
-            self.loss += (NegativeSamplingLoss(corpus, vocab_size, hidden_size, sample_size=sample_size),)
+            self.loss += (NegativeSamplingLoss(corpus, self.parameter_out, sample_size=sample_size),)
             
         for loss in self.loss:
             self.layers += loss.layers
