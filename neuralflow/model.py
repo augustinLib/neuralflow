@@ -145,12 +145,17 @@ class DenseLayer(BaseLayer):
         Returns:
             np.ndarray: DenseLayer의 feedforward 결과
         """
+        # for mixed precision training
         if self.mixed_precision:
             # sequnce 대응
             if x.ndim == 3:
+                # shape: (batch_size, n_timestep, input_size)
                 batch_size, n_timestep, _ = x.shape
+                
+                # reshape for matrix multiplication
                 reshaped_x = x.reshape(batch_size * n_timestep, -1)
                 self.x = x
+                # mixed precision training fp32 -> fp16
                 result = np.matmul(reshaped_x, self.parameter["weight"].astype(np.float16)) + self.parameter["bias"].astype(np.float16)
                 result = result.reshape(batch_size, n_timestep, -1)
 
@@ -191,6 +196,7 @@ class DenseLayer(BaseLayer):
         Returns:
             np.ndarray: DenseLayer의 backpropagation 결과
         """
+        # for mixed precision training
         if self.mixed_precision:
             if self.x.ndim == 3:
                 x = self.x
@@ -266,7 +272,7 @@ class DenseLayer(BaseLayer):
 class Embedding(BaseLayer):
     def __init__(self, parameter, mixed_precision = False):
         """
-        Initialize EmbeddingLayer
+        Initialize EmbeddingCell
 
         Parameters
         ----------
@@ -295,6 +301,15 @@ class Embedding(BaseLayer):
 
     
     def _forward(self, index):
+        """각 timestep의 input에 대한 embeddingCell의 forward propagation
+
+        Args:
+            index (np.ndarray): input의 vocab index
+
+        Returns:
+            np.ndarray: input의 embedding vector
+        """
+        # for mixed precision training
         if self.mixed_precision:
             self.index = index
             weight = self.parameter["weight"].astype(np.float16)
@@ -542,6 +557,8 @@ class ConvLayer(BaseLayer):
 
         initialize (str, optional) : 가중치 초기화 방법 설정. Default: "He"
 
+        Returns:
+            None
 
         """
         super().__init__()
@@ -568,6 +585,7 @@ class ConvLayer(BaseLayer):
         self.db = None
         
         if initialize == "He":
+            # self.parameter["weight"] : (output_channel, input_channel, kernel_height, kernel_width)
             self.parameter["weight"] = np.random.randn(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width).astype(np.float32) * (np.sqrt(2 / self.fan_in))
             self.parameter["bias"] = np.zeros(self.output_channel).astype(np.float32) 
 
@@ -595,13 +613,21 @@ class ConvLayer(BaseLayer):
     def _forward(self, x):
         # Mixed Precision Training
         if self.mixed_precision:
+            # x.shape = (n_input, n_input_channel, input_height, input_width)
             n_input, n_input_channel, input_height, input_width = x.shape
+            
+            # cnn size formular : (input_size + 2 * padding - kernel_size) / stride + 1
             out_height = int(1 + (input_height + self.padding * 2 - self.kernel_height) / self.stride)
             out_width = int(1 + (input_width + self.padding * 2 - self.kernel_width) / self.stride)
 
+            # col : (n_input * out_height * out_width, kernel_height * kernel_width * n_input_channel)
             col = self.img2col(x)
+            # col_weight : (kernel_height * kernel_width * n_input_channel, output_channel)
             col_weight = self.parameter["weight"].reshape(self.output_channel, -1).T.astype(np.float16)
+            
+            # result : (n_input * out_height * out_width, output_channel)
             result = np.matmul(col, col_weight) + self.parameter["bias"].astype(np.float16)
+            # result : (n_input, out_height, out_width, output_channel)
             result = result.reshape(n_input, out_height, out_width, -1).transpose(0, 3, 1, 2)
 
             self.x = x
@@ -626,15 +652,29 @@ class ConvLayer(BaseLayer):
 
     
     def _backward(self, input):
+        # input.shape = (n_input, output_channel, out_height, out_width)
         # Mixed Precision Training
         if self.mixed_precision:
+            # input.transpose(0,2,3,1) : (n_input, out_height, out_width, output_channel)
+            # input.transpose(0,2,3,1).reshape(-1, self.output_channel) : (n_input * out_height * out_width, output_channel)
             input = input.transpose(0,2,3,1).reshape(-1, self.output_channel)
-
+            
+            # self.col.T : (kernel_height * kernel_width * n_input_channel, n_input * out_height * out_width)
+            # self.dw : (kernel_height * kernel_width * n_input_channel, output_channel)
             self.dw = np.matmul(self.col.T, input)
+
+            # self.dw.transpose(1,0) : (output_channel, kernel_height * kernel_width * n_input_channel)
+            # self.dw.transpose(1,0).reshape(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width) : (output_channel, n_input_channel, kernel_height, kernel_width)
             self.dw = self.dw.transpose(1,0).reshape(self.output_channel, self.input_channel, self.kernel_height, self.kernel_width)
             self.db = np.sum(input, axis=0)
 
+            # self.input : (n_input * out_height * out_width, output_channel)
+            # self.col_weight : (kernel_height * kernel_width * n_input_channel, output_channel)
+            # self.col_weight.T : (output_channel, kernel_height * kernel_width * n_input_channel)
+            # dcol : (n_input * out_height * out_width, kernel_height * kernel_width * n_input_channel)
             dcol = np.matmul(input, self.col_weight.T)
+            
+            # result : (n_input, n_input_channel, input_height, input_width)
             result = self.col2img(dcol, self.x.shape)
             
         else:
@@ -668,21 +708,37 @@ class ConvLayer(BaseLayer):
     
 
     def img2col(self, input_data):
+        """input_data를 col로 변환, 4차원 -> 2차원 변환, 속도 향상을 위해 사용
+        Args:
+            input_data (np.ndarray): input data
+            
+        Returns:
+            np.ndarray: col
+        """
         # Mixed Precision Training
         if self.mixed_precision:
+            # input_data.shape = (n_input, n_input_channel, input_height, input_width)
             n_input, n_input_channel, input_height, input_width = input_data.shape
+            # cnn size formular : (input_size + 2 * padding - kernel_size) / stride + 1
             out_height = int((input_height + self.padding * 2 - self.kernel_height) // self.stride + 1)
             out_width = int((input_width + self.padding * 2 -self.kernel_width) // self.stride + 1)
 
+            # padding input_data with 0 
             img = np.pad(input_data, [(0,0), (0,0), (self.padding, self.padding), (self.padding, self.padding)], 'constant')
+            # col.shape = (n_input, n_input_channel, kernel_height, kernel_width, out_height, out_width)
             col = np.zeros((n_input, n_input_channel, self.kernel_height, self.kernel_width, out_height, out_width)).astype(np.float32)
 
+            # col에 img의 값을 넣어줌
             for y in range(self.kernel_height):
+                # y_max : y값이 kernel_height보다 커지면 안되므로 y값에 stride를 곱한 값이 kernel_height보다 커지면 안됨
                 y_max = y + self.stride * out_height
                 for x in range(self.kernel_width):
+                    # x_max : x값이 kernel_width보다 커지면 안되므로 x값에 stride를 곱한 값이 kernel_width보다 커지면 안됨
                     x_max = x + self.stride * out_width
+                    # 
                     col[:, :, y, x, :, :] = img[:, :, y:y_max:self.stride, x:x_max:self.stride]
-
+            # col.transpose(0, 4, 5, 1, 2, 3) : (n_input, out_height, out_width, n_input_channel, kernel_height, kernel_width)
+            # col.transpoese(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1) : (n_input * out_height * out_width, n_input_channel * kernel_height * kernel_width)
             col = col.transpose(0, 4, 5, 1, 2, 3).reshape(n_input * out_height * out_width, -1)
             
         else:
@@ -705,13 +761,29 @@ class ConvLayer(BaseLayer):
 
 
     def col2img(self, col, input_shape):
+        """col을 input_shape로 변환, 2차원 -> 4차원 변환, 속도 향상을 위해 사용
+
+        Args:
+            col (np.ndarray): 변환할 col
+            input_shape (tuple): col을 변환할 shape (foward 연산 시 input_shape)
+
+        Returns:
+            np.ndarray : 변환된 4차원 텐서
+        """
         # Mixed Precision Training
         if self.mixed_precision:
+            # input_shape = (n_input, n_input_channel, input_height, input_width)
             n_input, n_input_channel, input_height, input_width = input_shape
+            # cnn size formular : (input_size + 2 * padding - kernel_size) / stride + 1
             out_height = int((input_height + 2 * self.padding - self.kernel_height) // self.stride + 1)
             out_width = int((input_width + 2 * self.padding - self.kernel_width) // self.stride + 1)
+            
+            # col.shape = (n_input * out_height * out_width, n_input_channel * kernel_height * kernel_width)
+            # col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width) : (n_input, out_height, out_width, n_input_channel, kernel_height, kernel_width)
+            # col.reshape.transpose(0, 3, 4, 5, 1, 2) : (n_input, out_height, out_width, n_input_channel, kernel_height, kernel_width) -> (n_input, n_input_channel, kernel_height, kernel_width, out_height, out_width)
             col = col.reshape(n_input, out_height, out_width, n_input_channel, self.kernel_height, self.kernel_width).transpose(0, 3, 4, 5, 1, 2)
 
+            # img : 출력될 이미지를 저장할 변수 0으로 초기화
             img = np.zeros((n_input, n_input_channel, input_height + 2 * self.padding + self.stride - 1, input_width + 2 * self.padding + self.stride - 1)).astype(np.float32)
             for y in range(self.kernel_height):
                 y_max = y + self.stride * out_height
@@ -774,6 +846,8 @@ class GlobalAveragePoolingLayer(BaseLayer):
     
 
 class MaxPoolingLayer(BaseLayer):
+    """MaxPoolingLayer : 최대 풀링 레이어
+    """
     def __init__(self, kernel_size, stride = 1, padding = 0):
         super().__init__()
         
@@ -926,6 +1000,8 @@ class MaxPoolingLayer(BaseLayer):
 
 
 class RNNCell(BaseLayer):
+    """각 time step에서의 RNN Cell을 구현
+    """
     def __init__(self, parameter, mixed_precision = False):
         super().__init__()
         self.differentiable = True  
@@ -950,6 +1026,15 @@ class RNNCell(BaseLayer):
 
     
     def _forward(self, x, h_t_prev):
+        """각 timestep에서의 RNN cell의 forward propagation
+
+        Args:
+            x (np.ndarray): input data (각 timestep의 embedding vector)
+            h_t_prev (np.ndarray): 이전 timestep에서의 hidden state
+
+        Returns:
+            np.ndarray: 현재 timestep에서의 hidden state
+        """
         # Mixed Precision Training
         if self.mixed_precision:
             # (batch_size, hidden_size) x (hidden_size, hidden_size) + (batch_size, input_dim) x (input_dim, hidden_size)
@@ -972,6 +1057,14 @@ class RNNCell(BaseLayer):
 
 
     def _backward(self, input):
+        """각 timestep에서의 RNN cell의 backward propagation
+        
+        Args:
+            input (np.ndarray): 앞 timestep에서의 gradient + 현재 timestep에서의 앞 layer에서의 gradient
+            
+        Returns:
+            np.ndarray: 현재 timestep에서의 gradient
+        """
         # Mixed Precision Training
         if self.mixed_precision:
             # self.cache에 저장된 현재 timestep에서의 input, 이전 timestep에서의 hidden state, 현재 timestep에서의 output 불러오기
