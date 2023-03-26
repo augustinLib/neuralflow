@@ -46,6 +46,7 @@ model_ln = Model(
     Dropout(dropout),
     DenseLayer(hidden_size, vocab_size)
 )
+
 # mixed precision
 model_ln.mixed_precision_on()
 
