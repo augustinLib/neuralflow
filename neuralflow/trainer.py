@@ -4,11 +4,12 @@ import matplotlib.pyplot as plt
 from collections import OrderedDict
 from neuralflow.gpu import *
 from neuralflow.utils import *
+from neuralflow.epoch_notice import *
 import time
 
 
 class BaseTrainer():
-    def __init__(self, n_epochs= 10, init_lr=0.01, file_name = None):
+    def __init__(self, n_epochs= 10, init_lr=0.01, file_name = None, notice_logger = None):
         """
         Base class for Trainer
 
@@ -31,6 +32,7 @@ class BaseTrainer():
         self.best_valid_loss = 100
         self.file_name = file_name
         self.train_time = np.array([])
+        self.notice_logger = notice_logger
 
     def __repr__(self):
         return "Trainer"
@@ -175,7 +177,7 @@ class EmbeddingTrainer(BaseTrainer):
     
 
 class ClassificationTrainer(BaseTrainer):
-    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01, file_name= None):
+    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=0.01, file_name= None, notice_logger = None, task = 'classification'):
         """
         Trainer for Classification
 
@@ -192,7 +194,7 @@ class ClassificationTrainer(BaseTrainer):
         init_lr (int) : initial learning rate. Default: 0.01
 
         """
-        super().__init__(n_epochs, init_lr, file_name=file_name)
+        super().__init__(n_epochs, init_lr, file_name=file_name, notice_logger=notice_logger)
         self.model = model
         self.critic = critic
         self.optimizer = optimizer
@@ -200,6 +202,7 @@ class ClassificationTrainer(BaseTrainer):
         self.train_accuracy_list = np.array([0])
         self.valid_accuracy_list = np.array([0])
         self.test_accuracy_list = np.array([0])
+        self.task = task
         
 
     def _forward(self, x, y):
@@ -274,6 +277,8 @@ class ClassificationTrainer(BaseTrainer):
             
             print()
             print(f"epoch {epoch+1} -- train loss : {epoch_train_loss}    train accuarcy : {epoch_train_accuracy}")
+            if self.notice_logger != None:
+                self.notice_logger.send_messages(f"task : {self.task} : epoch {epoch+1}", f"epoch {epoch+1} -- train loss : {epoch_train_loss}    train accuarcy : {epoch_train_accuracy}")
             
             finish_time = time.time()
             epoch_time = finish_time - start_time
@@ -329,6 +334,10 @@ class ClassificationTrainer(BaseTrainer):
         
         print()
         print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss}    valid accuarcy : {epoch_valid_accuracy}")
+
+    
+        if self.notice_logger != None:
+            self.notice_logger.send_messages(f"task : {self.task} : epoch {epoch+1}", f"epoch {epoch+1} -- valid loss : {epoch_valid_loss}    train accuarcy : {epoch_valid_accuracy}")
         print("----------------------------------------------------------------")    
 
         
