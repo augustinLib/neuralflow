@@ -444,7 +444,7 @@ class ClassificationTrainer(BaseTrainer):
     
         
 class LanguageModelTrainer(BaseTrainer):
-    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=None, file_name= None):
+    def __init__(self, model, critic, optimizer, n_epochs= 10, init_lr=None, file_name= None, notice_logger = None, task = 'Language Modeling'):
         """
         Trainer for Language modeling
 
@@ -471,6 +471,7 @@ class LanguageModelTrainer(BaseTrainer):
         self.valid_perplexity_list = np.array([])
         self.best_ppl = float('inf')
         self.init_lr = init_lr
+        self.task = task
 
 
     def _forward(self, x, y):
@@ -552,6 +553,9 @@ class LanguageModelTrainer(BaseTrainer):
             self.train_time = np.append(self.train_time, epoch_time)
             print(f"{epoch_time:.1f}s elapsed")
             
+            if self.notice_logger != None:
+                self.notice_logger.send_messages(f"task : {self.task} : epoch {epoch+1}", f"epoch {epoch+1} -- train loss : {epoch_train_loss}    train ppl : {epoch_train_perplexity}")
+
             if valid_dataloader is not None:
                 self._validate(valid_dataloader, epoch, show_iter_num=show_iter_num)
             else:
@@ -605,6 +609,8 @@ class LanguageModelTrainer(BaseTrainer):
 
         print()
         print(f"epoch {epoch+1} -- valid loss : {epoch_valid_loss:.6f}    valid perplexity : {epoch_valid_perplexity:.6f}")
+        if self.notice_logger != None:
+            self.notice_logger.send_messages(f"task : {self.task} : epoch {epoch+1}", f"epoch {epoch+1} -- valid loss : {epoch_valid_loss}    valid ppl : {epoch_valid_perplexity}")
         print("----------------------------------------------------------------")
         print()
 
